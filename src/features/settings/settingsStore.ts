@@ -8,6 +8,7 @@ export async function loadSettings(): Promise<AppSettings> {
     // Merge defensively so a partial/older file can't drop required keys.
     return {
       appearance: { ...DEFAULT_SETTINGS.appearance, ...s.appearance },
+      result: { ...DEFAULT_SETTINGS.result, ...s.result },
       window: { ...DEFAULT_SETTINGS.window, ...s.window },
       ai: { ...DEFAULT_SETTINGS.ai, ...s.ai },
       search: { ...DEFAULT_SETTINGS.search, ...s.search },

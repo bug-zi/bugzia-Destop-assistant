@@ -18,10 +18,33 @@ import {
   type FileResult,
 } from "../features/result/resultTypes";
 import { loadSettings } from "../features/settings/settingsStore";
-import { applyAppearanceVars } from "../features/appearance/appearance";
+import type { SettingsPatch } from "../features/settings/settingsTypes";
+import { applyAppearanceVars, applyResultVars } from "../features/appearance/appearance";
 
 function logErr(label: string) {
   return (e: unknown) => console.error(`[bugzia] ${label}`, e);
+}
+
+/** Pin/thumbtack icon — outline when unpinned, filled when pinned. Mirrors the
+ *  SparkIcon pattern in InputBar. Toggling it drives the result window's
+ *  always-on-top (via the `set_result_always_on_top` backend command). */
+function PinIcon({ active }: { active: boolean }) {
+  return (
+    <svg
+      width="16"
+      height="16"
+      viewBox="0 0 24 24"
+      fill={active ? "currentColor" : "none"}
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M12 17v5" />
+      <path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z" />
+    </svg>
+  );
 }
 
 /** Return a new list with the LAST assistant message's content mapped by `fn`.
@@ -97,7 +120,10 @@ export default function ResultWindow() {
       // Match the main bar's customized glass appearance (design §2.1.4 shared theme).
       try {
         const s = await loadSettings();
-        if (alive) applyAppearanceVars(s.appearance);
+        if (alive) {
+          applyAppearanceVars(s.appearance);
+          applyResultVars(s.result);
+        }
       } catch (e) {
         console.error("[bugzia] result load appearance", e);
       }
@@ -184,6 +210,15 @@ export default function ResultWindow() {
           void getCurrentWindow().hide().catch(logErr("result hide"));
         }),
       );
+      offs.push(
+        await listen<SettingsPatch>("settings:updated", (ev) => {
+          // Live-apply panel styling as the user drags the result-panel sliders
+          // in the settings window — and the global glass theme too, which the
+          // overlay otherwise only picks up once on mount.
+          applyAppearanceVars(ev.payload.appearance);
+          applyResultVars(ev.payload.result);
+        }),
+      );
 
       // Tell main we're listening; it replies with a `result:replay`.
       emit(EV.RESULT_READY).catch(logErr("result emit ready"));
@@ -211,6 +246,7 @@ export default function ResultWindow() {
     setPinned((v) => {
       const next = !v;
       pinnedRef.current = next;
+      invoke("set_result_always_on_top", { top: next }).catch(logErr("result set always on top"));
       emit(EV.COMMAND_PINNED_CHANGED, { pinned: next }).catch(logErr("result emit pinned"));
       return next;
     });
@@ -227,12 +263,13 @@ export default function ResultWindow() {
         <span className="result-title">{isFile ? "文件结果" : "AI 对话"}</span>
         <div className="result-actions">
           <button
-            className="result-btn"
+            className="result-btn result-btn-icon"
             type="button"
             onClick={togglePin}
-            title={pinned ? "取消固定（Esc 将可隐藏）" : "固定（Esc 不再隐藏）"}
+            aria-pressed={pinned}
+            title={pinned ? "取消固定与置顶（Esc 将可隐藏）" : "固定并置顶（Esc 不再隐藏）"}
           >
-            {pinned ? "已固定" : "固定"}
+            <PinIcon active={pinned} />
           </button>
           <button
             className="result-btn"

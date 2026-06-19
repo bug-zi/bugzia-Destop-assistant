@@ -10,12 +10,16 @@
     var(--bugzia-bg-r),
     var(--bugzia-bg-g),
     var(--bugzia-bg-b),
-    var(--bugzia-bg-a)
+    var(--bugzia-result-bg-a)
   );
-  backdrop-filter: blur(var(--bugzia-blur));
-  -webkit-backdrop-filter: blur(var(--bugzia-blur));
+  backdrop-filter: blur(var(--bugzia-result-blur));
+  -webkit-backdrop-filter: blur(var(--bugzia-result-blur));
   border: 1px solid var(--bugzia-border);
-  border-radius: var(--bugzia-radius);
+  border-radius: var(--bugzia-result-radius);
+  /* Re-scope the global font-scale var onto the result-panel value, so result
+     text (ChatView / FileResultsView, only ever rendered inside .result-card)
+     uses an independent size from the input bar. */
+  --bugzia-font-scale: var(--bugzia-result-font-scale);
   box-shadow: 0 8px 28px rgba(31, 36, 40, 0.18);
 }
 
@@ -80,6 +84,20 @@
   background: rgba(255, 255, 255, 0.95);
 }
 
+/* Square icon button (the pin) — same chrome as the text buttons, just centered. */
+.result-btn-icon {
+  width: 28px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Pinned: hold the highlight so the active state reads at a glance, not only on hover. */
+.result-btn-icon[aria-pressed="true"] {
+  background: rgba(255, 255, 255, 0.95);
+}
+
 /* Body holds the reused ChatView; it must not scroll itself — ChatView's own
    .chat-scroll handles scrolling. */
 .result-body {
@@ -91,4 +109,12 @@
   padding: 8px 12px 12px;
   display: flex;
   flex-direction: column;
+  /* Override the global html/body/#root `user-select: none` (set for the command
+     bar in theme.css) so result text — the AI reply and file hits — can be
+     dragged to select and copied. The header (grip/title/buttons) sits outside
+     .result-body and stays unselectable, so dragging the window never selects
+     text. user-select inherits, so an explicit value here wins over the
+     inherited none regardless of selector specificity. */
+  -webkit-user-select: text;
+  user-select: text;
 }

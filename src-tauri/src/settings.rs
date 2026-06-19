@@ -51,6 +51,53 @@ impl Default for AppearanceSettings {
     }
 }
 
+/// Result-overlay panel appearance. INDEPENDENT of the global glass theme so the
+/// overlay can be tuned without touching the input bar. Like `AppearanceSettings`,
+/// a manual `Default` (not the derive) keeps the values at the original hardcoded
+/// pixels, and `#[serde(default)]` on the `AppSettings` field keeps a legacy
+/// `settings.json` (which lacks this section) loading instead of wiping it.
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct ResultAppearanceSettings {
+    /// 0.0 - 1.0, overlay background alpha (overrides the global bg_a here).
+    pub bg_a: f32,
+    /// overlay corner radius in px.
+    pub radius: f32,
+    /// overlay backdrop blur in px.
+    pub blur: f32,
+    /// result-area font scale multiplier (scoped via .result-card). 1.0 = default.
+    pub font_scale: f32,
+    /// list / chat-bubble row gap in px.
+    pub row_gap: f32,
+    /// list row / chat bubble corner radius in px.
+    pub item_radius: f32,
+    /// file-row inner padding in px (horizontal padding tracks this + 2px).
+    pub row_pad: f32,
+    /// 0.0 - 1.0, file-row hover highlight alpha.
+    pub hover_alpha: f32,
+    /// scrollbar width in px.
+    pub scrollbar_w: f32,
+}
+
+impl Default for ResultAppearanceSettings {
+    fn default() -> Self {
+        // Mirrors the original hardcoded result-panel values. row_gap (previously
+        // file 4 / chat 8) and item_radius (previously file ~6.6 / bubble 11) are
+        // unified to a midpoint; every other value reproduces the prior pixel so a
+        // fresh install is visually unchanged.
+        Self {
+            bg_a: 0.34,
+            radius: 12.0,
+            blur: 18.0,
+            font_scale: 1.0,
+            row_gap: 6.0,
+            item_radius: 9.0,
+            row_pad: 6.0,
+            hover_alpha: 0.72,
+            scrollbar_w: 8.0,
+        }
+    }
+}
+
 /// Window bounds are stored in LOGICAL pixels (matches the frontend's
 /// LogicalSize/LogicalPosition usage, so restore + expand-toggle share one space).
 ///
@@ -203,6 +250,8 @@ impl Default for SystemSettings {
 pub struct AppSettings {
     #[serde(default)]
     pub appearance: AppearanceSettings,
+    #[serde(default)]
+    pub result: ResultAppearanceSettings,
     #[serde(default)]
     pub window: WindowSettings,
     #[serde(default)]

@@ -3,11 +3,13 @@ import type {
   AppSettings,
   AppearanceSettings,
   AiSettings,
+  ResultAppearanceSettings,
   SearchSettings,
   WindowSettings,
 } from "../features/settings/settingsTypes";
 import { loadApiKey, saveApiKey, clearApiKey, testAiConnection } from "../features/settings/settingsStore";
 import { SEARCH_ENGINES } from "../features/search/command";
+import { open } from "@tauri-apps/plugin-dialog";
 import "./SettingsPanel.css";
 
 interface SettingsPanelProps {
@@ -25,6 +27,8 @@ export default function SettingsPanel({ settings, onChange, onClose }: SettingsP
     onChange({ ...settings, search: { ...settings.search, ...p } });
   const patchWindow = (p: Partial<WindowSettings>) =>
     onChange({ ...settings, window: { ...settings.window, ...p } });
+  const patchResult = (p: Partial<ResultAppearanceSettings>) =>
+    onChange({ ...settings, result: { ...settings.result, ...p } });
 
   // API key lives in the OS keyring, separate from the JSON settings, so it has
   // its own local state + explicit save.
@@ -34,6 +38,8 @@ export default function SettingsPanel({ settings, onChange, onClose }: SettingsP
   // Connectivity test ("测试连接") state.
   const [testing, setTesting] = useState(false);
   const [testRes, setTestRes] = useState<{ ok: boolean; text: string } | null>(null);
+  // Draft text for the "忽略目录名" add-row before it's committed to the list.
+  const [ignoreDraft, setIgnoreDraft] = useState("");
 
   useEffect(() => {
     let alive = true;
@@ -74,7 +80,42 @@ export default function SettingsPanel({ settings, onChange, onClose }: SettingsP
     }
   }
 
+  /** Native folder picker -> append a directory to index_dirs (dedup, case-insensitive). */
+  async function handlePickDir() {
+    let picked: string | null;
+    try {
+      picked = await open({ directory: true, multiple: false });
+    } catch (e) {
+      console.error("[bugzia] pick directory failed", e);
+      return;
+    }
+    if (!picked) return;
+    const dirs = settings.search.index_dirs;
+    const lower = picked.toLowerCase();
+    if (dirs.some((d) => d.toLowerCase() === lower)) return;
+    patchSearch({ index_dirs: [...dirs, picked] });
+  }
+
+  function removeIndexDir(index: number) {
+    patchSearch({ index_dirs: settings.search.index_dirs.filter((_, i) => i !== index) });
+  }
+
+  /** Commit the ignore-segment draft (trim, dedup case-insensitively). */
+  function addIgnoreDir() {
+    const seg = ignoreDraft.trim();
+    setIgnoreDraft("");
+    if (!seg) return;
+    const segs = settings.search.ignore_dirs;
+    if (segs.some((s) => s.toLowerCase() === seg.toLowerCase())) return;
+    patchSearch({ ignore_dirs: [...segs, seg] });
+  }
+
+  function removeIgnoreDir(index: number) {
+    patchSearch({ ignore_dirs: settings.search.ignore_dirs.filter((_, i) => i !== index) });
+  }
+
   const a = settings.appearance;
+  const r = settings.result;
   const ai = settings.ai;
 
   return (
@@ -98,7 +139,13 @@ export default function SettingsPanel({ settings, onChange, onClose }: SettingsP
                 checked={settings.window.locked}
                 onChange={(e) => patchWindow({ locked: e.target.checked })}
               />
-              🔒 锁定位置（锁定后无法拖动卡片）
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
+                stroke="currentColor" strokeWidth="2" strokeLinecap="round"
+                strokeLinejoin="round" aria-hidden="true">
+                <rect x="4" y="11" width="16" height="10" rx="2" />
+                <path d="M8 11V7a4 4 0 0 1 8 0v4" />
+              </svg>
+              锁定位置与大小（锁定后无法拖动或拉伸卡片）
             </label>
           </section>
 
@@ -119,6 +166,29 @@ export default function SettingsPanel({ settings, onChange, onClose }: SettingsP
               fmt={(v) => `${v}px`} onChange={(v) => patchAppearance({ radius: v })} />
             <ColorRow label="字号" value={a.font_scale} min={0.8} max={1.6} step={0.05}
               fmt={(v) => `${v.toFixed(2)}×`} onChange={(v) => patchAppearance({ font_scale: v })} />
+          </section>
+
+          {/* ── 结果面板 ── */}
+          <section className="settings-section">
+            <h4>结果面板</h4>
+            <ColorRow label="透明度" value={r.bg_a} min={0} max={1} step={0.01}
+              fmt={(v) => v.toFixed(2)} onChange={(v) => patchResult({ bg_a: v })} />
+            <ColorRow label="圆角" value={r.radius} min={0} max={30} step={1}
+              fmt={(v) => `${v}px`} onChange={(v) => patchResult({ radius: v })} />
+            <ColorRow label="模糊" value={r.blur} min={0} max={40} step={1}
+              fmt={(v) => `${v}px`} onChange={(v) => patchResult({ blur: v })} />
+            <ColorRow label="字号" value={r.font_scale} min={0.8} max={1.6} step={0.05}
+              fmt={(v) => `${v.toFixed(2)}×`} onChange={(v) => patchResult({ font_scale: v })} />
+            <ColorRow label="行间距" value={r.row_gap} min={0} max={16} step={1}
+              fmt={(v) => `${v}px`} onChange={(v) => patchResult({ row_gap: v })} />
+            <ColorRow label="列表项圆角" value={r.item_radius} min={0} max={20} step={1}
+              fmt={(v) => `${v}px`} onChange={(v) => patchResult({ item_radius: v })} />
+            <ColorRow label="行内边距" value={r.row_pad} min={0} max={16} step={1}
+              fmt={(v) => `${v}px`} onChange={(v) => patchResult({ row_pad: v })} />
+            <ColorRow label="悬停高亮" value={r.hover_alpha} min={0} max={1} step={0.01}
+              fmt={(v) => v.toFixed(2)} onChange={(v) => patchResult({ hover_alpha: v })} />
+            <ColorRow label="滚动条宽度" value={r.scrollbar_w} min={4} max={14} step={1}
+              fmt={(v) => `${v}px`} onChange={(v) => patchResult({ scrollbar_w: v })} />
           </section>
 
           {/* ── AI ── */}
@@ -188,6 +258,34 @@ export default function SettingsPanel({ settings, onChange, onClose }: SettingsP
                 placeholder="https://example.com/search?q= (用 {q} 占位)"
                 onChange={(e) => patchSearch({ custom_engine_url: e.target.value })} />
             </Field>
+
+            <Field label="搜索范围目录">
+              <div className="list-add-row">
+                <button className="key-btn" type="button" onClick={handlePickDir}>选择文件夹…</button>
+              </div>
+              <StringList items={settings.search.index_dirs} onRemove={removeIndexDir} />
+              <div className="hint">桌面 / 文档 / 下载 默认已包含；点上方按钮追加其它目录。</div>
+            </Field>
+
+            <Field label="忽略目录名">
+              <div className="list-add-row">
+                <input className="f-input" value={ignoreDraft}
+                  placeholder="例如 temp、缓存、备份"
+                  onChange={(e) => setIgnoreDraft(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      addIgnoreDir();
+                    }
+                  }} />
+                <button className="key-btn" type="button" onClick={addIgnoreDir}>添加</button>
+              </div>
+              <StringList items={settings.search.ignore_dirs} onRemove={removeIgnoreDir} />
+              <div className="hint">按目录名最后一段匹配、忽略大小写；node_modules / .git 等已内置忽略。</div>
+            </Field>
+
+            <ColorRow label="结果上限" value={settings.search.max_results} min={1} max={500} step={1}
+              fmt={(v) => String(v)} onChange={(v) => patchSearch({ max_results: v })} />
           </section>
         </div>
       </div>
@@ -229,5 +327,22 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
       <span className="field-label">{label}</span>
       {children}
     </div>
+  );
+}
+
+/** Removable list of string items (搜索范围目录 / 忽略目录名). Empty -> nothing. */
+function StringList({ items, onRemove }: { items: string[]; onRemove: (index: number) => void }) {
+  if (!items.length) return null;
+  return (
+    <ul className="str-list">
+      {items.map((it, i) => (
+        <li className="str-list-item" key={`${i}:${it}`}>
+          <span className="str-list-text" title={it}>{it}</span>
+          <button className="str-list-del" type="button" title="删除" onClick={() => onRemove(i)}>
+            删除
+          </button>
+        </li>
+      ))}
+    </ul>
   );
 }

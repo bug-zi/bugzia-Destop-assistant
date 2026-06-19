@@ -5,8 +5,8 @@ import { emit, listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import InputBar from "./InputBar";
 import "./CommandCard.css";
-import { browserSearch, parseCommand, SEARCH_ENGINES, type CommandMode, type SearchEngine } from "../features/search/command";
-import { streamChat, stopChat, clearContext, type ChatMessage } from "../features/ai/chat";
+import { browserSearch, COMMANDS, parseCommand, SEARCH_ENGINES, type CommandMode, type SearchEngine } from "../features/search/command";
+import { streamChat, streamOnce, stopChat, clearContext, type ChatEvent, type ChatMessage } from "../features/ai/chat";
 import { loadSettings, saveSettings } from "../features/settings/settingsStore";
 import { openSettingsWindow } from "../features/settings/settingsWindow";
 import { applyAppearanceVars } from "../features/appearance/appearance";
@@ -36,6 +36,21 @@ function patchLastAssistant(msgs: ChatMessage[], fn: (content: string) => string
     }
   }
   return msgs;
+}
+
+/** Markdown listing of every command in the registry (powers /help). */
+function renderHelpMarkdown(): string {
+  const lines = COMMANDS.filter((c) => !c.hidden).map((c) => {
+    const triggers = [c.prefix, ...(c.aliases ?? [])].filter(Boolean) as string[];
+    return `- **${triggers.join(" / ")}** — ${c.description}`;
+  });
+  return [
+    "可用命令",
+    "",
+    ...lines,
+    "",
+    "直接输入文本即与 AI 对话；带参数的命令需在命令名后加一个空格再写内容。",
+  ].join("\n");
 }
 
 /**
@@ -152,7 +167,9 @@ export default function CommandCard() {
         if (s.window.w > 0 && s.window.h > 0) {
           await win.setPosition(new LogicalPosition(s.window.x, s.window.y));
           // Never restore the old expanded height (legacy saves may hold 420);
-          // main is always a thin bar.
+          // main is always a thin bar (height locked: tauri.conf.json
+          // minHeight=maxHeight=64). Width is user-adjustable, so restore the
+          // persisted s.window.w.
           await win.setSize(new LogicalSize(s.window.w, COLLAPSED_H));
         }
       } catch (e) {
@@ -174,6 +191,15 @@ export default function CommandCard() {
   useEffect(() => {
     if (settings) applyAppearanceVars(settings.appearance);
   }, [settings?.appearance]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── lock also freezes SIZE: disable resize while locked (position is already
+  //    frozen by the drag-layer). Toggled from Settings; requires the
+  //    core:window:allow-set-resizable capability (capabilities/default.json). ──
+  useEffect(() => {
+    if (!settings) return;
+    const win = getCurrentWindow();
+    void win.setResizable(!settings.window.locked).catch(logErr("setResizable"));
+  }, [settings?.window.locked]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── persist window bounds on OS move/resize ──
   useEffect(() => {
@@ -217,6 +243,7 @@ export default function CommandCard() {
         const merged: AppSettings = {
           ...cur,
           appearance: ev.payload.appearance,
+          result: ev.payload.result,
           ai: ev.payload.ai,
           search: ev.payload.search,
           window: { ...cur.window, locked: ev.payload.windowLocked },
@@ -322,13 +349,127 @@ export default function CommandCard() {
     }
   }
 
+  /** Render a one-shot result as a single assistant message — no streaming,
+   *  no backend `ChatState` write. Used by /weather, /trans, /help. The result
+   *  does NOT enter the conversation context; the frontend mirror is
+   *  self-consistent for the session (replayed to the overlay), and a restart
+   *  loses it (same as an AI turn). */
+  async function runAssistantOnce(
+    displayText: string,
+    produce: () => Promise<string>,
+    busyText: string,
+  ) {
+    modeRef.current = "chat";
+    setMessages((m) => [
+      ...m,
+      { role: "user", content: displayText },
+      { role: "assistant", content: "" },
+    ]);
+    setGenerating(true);
+    setStatusText(busyText);
+    await revealResult();
+    emit(EV.RESULT_SET_MODE, { mode: "chat" }).catch(logErr("emit set-mode"));
+    emit(EV.RESULT_CHAT_START, { userText: displayText }).catch(logErr("emit chat-start"));
+    try {
+      const md = await produce();
+      setMessages((m) => patchLastAssistant(m, () => md));
+      emit(EV.RESULT_CHAT_DONE, { fullText: md, model: "", stopped: false }).catch(
+        logErr("emit done"),
+      );
+      setStatusText("已回复");
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      setMessages((m) => patchLastAssistant(m, () => `错误：${message}`));
+      emit(EV.RESULT_CHAT_ERROR, { message }).catch(logErr("emit error"));
+      setStatusText("错误");
+    } finally {
+      setGenerating(false);
+    }
+  }
+
+  /** Streaming sibling of `runAssistantOnce`: used by `/trans` (and any future
+   *  one-shot command whose result is long enough to warrant live tokens). Like
+   *  `runAssistantOnce`, it does NOT touch the backend `ChatState` — the prompt
+   *  is answered context-free (see `ask_once_stream`), so tool-style results
+   *  never pollute the main conversation. Deltas are forwarded to the result
+   *  overlay exactly like an AI turn. */
+  async function runAssistantStream(
+    displayText: string,
+    streamFn: (onEvent: (e: ChatEvent) => void) => Promise<void>,
+    busyText: string,
+  ) {
+    modeRef.current = "chat";
+    setMessages((m) => [
+      ...m,
+      { role: "user", content: displayText },
+      { role: "assistant", content: "" },
+    ]);
+    setGenerating(true);
+    setStatusText(busyText);
+    await revealResult();
+    emit(EV.RESULT_SET_MODE, { mode: "chat" }).catch(logErr("emit set-mode"));
+    emit(EV.RESULT_CHAT_START, { userText: displayText }).catch(logErr("emit chat-start"));
+    try {
+      await streamFn((e) => {
+        if (e.event === "delta") {
+          setMessages((m) => patchLastAssistant(m, (c) => c + e.data.text));
+          emit(EV.RESULT_CHAT_DELTA, { text: e.data.text }).catch(logErr("emit delta"));
+        } else if (e.event === "done") {
+          const full = e.data.fullText;
+          const model = e.data.model;
+          setMessages((m) => {
+            const copy = [...m];
+            for (let i = copy.length - 1; i >= 0; i--) {
+              if (copy[i].role === "assistant") {
+                copy[i] = {
+                  ...copy[i],
+                  content: full || copy[i].content,
+                  ...(model ? { model } : {}),
+                };
+                break;
+              }
+            }
+            return copy;
+          });
+          emit(EV.RESULT_CHAT_DONE, { fullText: full, model, stopped: e.data.stopped }).catch(
+            logErr("emit done"),
+          );
+          setStatusText("已回复");
+        } else if (e.event === "error") {
+          const message = e.data.message;
+          setMessages((m) => patchLastAssistant(m, () => `错误：${message}`));
+          emit(EV.RESULT_CHAT_ERROR, { message }).catch(logErr("emit error"));
+          setStatusText("错误");
+        }
+      });
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      setMessages((m) => patchLastAssistant(m, () => `错误：${message}`));
+      emit(EV.RESULT_CHAT_ERROR, { message }).catch(logErr("emit error"));
+      setStatusText("错误");
+    } finally {
+      setGenerating(false);
+    }
+  }
+
   async function handleSubmit(forceMode?: CommandMode) {
     const cmd = parseCommand(value);
     const mode = forceMode ?? cmd.mode;
     const query = cmd.query;
+
+    // /help is argless (query is always "") and must run before the empty-query
+    // early return below.
+    if (mode === "help") {
+      setValue("");
+      void runAssistantOnce("命令列表", () => Promise.resolve(renderHelpMarkdown()), "生成中");
+      return;
+    }
+
     if (!query) return;
-    // Don't start a new AI turn while one is in flight (keep the typed text).
-    if (mode === "ai" && generatingRef.current) return;
+    // Don't start a new turn while one is in flight (keep the typed text).
+    if (generatingRef.current && (mode === "ai" || mode === "weather" || mode === "trans")) {
+      return;
+    }
     setValue("");
 
     if (mode === "web") {
@@ -338,6 +479,30 @@ export default function CommandCard() {
     }
     if (mode === "file") {
       void runFileSearch(query);
+      return;
+    }
+    if (mode === "weather") {
+      void runAssistantOnce(
+        query,
+        () => invoke<string>("weather", { city: query }),
+        "查询天气中",
+      );
+      return;
+    }
+    if (mode === "trans") {
+      // Dictionary-style: all senses + example sentences. Direction defaults to
+      // Chinese <-> English; an explicit target stated in the input (e.g.
+      // "翻译成日语", "into French") overrides it. Streams token-by-token via
+      // the context-free `ask_once_stream`, so a translation never pollutes the
+      // main chat history.
+      const prompt =
+        "请把下面的内容当作词典词条处理，用 Markdown 分点输出，不要寒暄或多余说明：\n" +
+        "- 若是单词或短语：列出该词所有常见释义，按词性或含义分点（如 n. / v. / adj.）；为最常用的 1 至 2 个释义各给一个例句（原文 + 中文翻译）。\n" +
+        "- 若是完整的句子：先给整句译文；再挑出关键生词给出释义和一个例句。\n" +
+        '默认中英互译；若内容中明确指定了其他目标语言（例如"翻译成日语"、"into French"），则翻译成该语言。\n\n' +
+        "内容：\n" +
+        query;
+      void runAssistantStream(query, (onEvent) => streamOnce(prompt, onEvent), "翻译中");
       return;
     }
 

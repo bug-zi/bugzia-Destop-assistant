@@ -41,6 +41,7 @@ export default function SettingsWindow() {
     patchTimer.current = window.setTimeout(() => {
       void emit("settings:updated", {
         appearance: next.appearance,
+        result: next.result,
         ai: next.ai,
         search: next.search,
         windowLocked: next.window.locked,
@@ -62,6 +63,7 @@ export default function SettingsWindow() {
       patchTimer.current = null;
       void emit("settings:updated", {
         appearance: cur.appearance,
+        result: cur.result,
         ai: cur.ai,
         search: cur.search,
         windowLocked: cur.window.locked,

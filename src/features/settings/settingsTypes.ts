@@ -19,6 +19,37 @@ export interface AppearanceSettings {
   font_scale: number;
 }
 
+/**
+ * Result-overlay panel appearance (ResultWindow). INDEPENDENT of the global
+ * glass theme: the overlay can have its own transparency / radius / blur /
+ * font scale, plus list & bubble typography tweaks (row gap, item radius, row
+ * padding, hover highlight, scrollbar width).
+ *
+ * Frontend mirror of the Rust `ResultAppearanceSettings` (settings.rs); field
+ * names MUST match the serde JSON keys exactly.
+ */
+export interface ResultAppearanceSettings {
+  /** 0..1, overlay background alpha (overrides the global bg_a on the overlay) */
+  bg_a: number;
+  /** overlay corner radius in px */
+  radius: number;
+  /** overlay backdrop blur in px */
+  blur: number;
+  /** result-area font scale; scoped via .result-card so it stays isolated
+   *  from the input bar's global font scale. 1.0 = default */
+  font_scale: number;
+  /** list / chat-bubble row gap in px */
+  row_gap: number;
+  /** list row / chat bubble corner radius in px */
+  item_radius: number;
+  /** file-row inner padding in px (horizontal padding tracks this + 2px) */
+  row_pad: number;
+  /** 0..1, file-row hover highlight alpha */
+  hover_alpha: number;
+  /** scrollbar width in px */
+  scrollbar_w: number;
+}
+
 export interface WindowSettings {
   x: number;
   y: number;
@@ -63,6 +94,7 @@ export interface SystemSettings {
 
 export interface AppSettings {
   appearance: AppearanceSettings;
+  result: ResultAppearanceSettings;
   window: WindowSettings;
   ai: AiSettings;
   search: SearchSettings;
@@ -77,6 +109,18 @@ export const DEFAULT_APPEARANCE: AppearanceSettings = {
   blur: 18,
   radius: 12,
   font_scale: 1,
+};
+
+export const DEFAULT_RESULT: ResultAppearanceSettings = {
+  bg_a: 0.34,
+  radius: 12,
+  blur: 18,
+  font_scale: 1,
+  row_gap: 6,
+  item_radius: 9,
+  row_pad: 6,
+  hover_alpha: 0.72,
+  scrollbar_w: 8,
 };
 
 export const DEFAULT_WINDOW: WindowSettings = {
@@ -115,6 +159,7 @@ export const DEFAULT_SYSTEM: SystemSettings = {
 
 export const DEFAULT_SETTINGS: AppSettings = {
   appearance: DEFAULT_APPEARANCE,
+  result: DEFAULT_RESULT,
   window: DEFAULT_WINDOW,
   ai: DEFAULT_AI,
   search: DEFAULT_SEARCH,
@@ -129,6 +174,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
  */
 export interface SettingsPatch {
   appearance: AppearanceSettings;
+  result: ResultAppearanceSettings;
   ai: AiSettings;
   search: SearchSettings;
   windowLocked: boolean;

@@ -30,31 +30,27 @@
 .bar-row {
   position: relative;
   z-index: 1;
-  flex: 0 0 auto;
-  height: var(--bugzia-bar-height);
+  /* 占满 .card 主轴，输入框随卡片高度恒垂直居中、上下严格对称（高度已锁死
+     64px，见 tauri.conf.json）。padding 左右对称(8px)使 spark 与 gear 关于
+     输入框中心左右对称。 */
+  flex: 1 1 auto;
+  min-height: 0;
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 0 8px 0 12px;
+  padding: 0 8px;
 }
 
-.grip {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex: 0 0 auto;
-  width: 24px;
-  height: 100%;
-  color: var(--bugzia-text-weak);
-  cursor: grab;
+/* 交互元素(spark/input/status/gear)提到隐形 drag-layer 之上，确保可点击；
+   drag-layer(z-index:0)只在空白处露出，供拖动移动窗口。 */
+.bar-row > :not(.drag-layer) {
+  position: relative;
+  z-index: 1;
 }
 
-.grip:active {
-  cursor: grabbing;
-}
-
-/* Spark (star) — the result-overlay toggle button. Mirrors the gear's look on
-   the left edge; `.active` (overlay open) fills the star + lifts the chip. */
+/* Spark (star) — the result-overlay toggle button. `.active` (overlay open)
+   fills the star itself light-white; the open state is carried by the icon,
+   not by a filled box around it. */
 .spark {
   display: flex;
   align-items: center;
@@ -77,8 +73,9 @@
 }
 
 .spark.active {
-  color: var(--bugzia-text);
-  background: rgba(255, 255, 255, 0.55);
+  /* Filled star on open: a muted white (lighter than the input bar) so the
+     active state stays subtle rather than bright. */
+  color: rgba(255, 255, 255, 0.5);
 }
 
 .input {
@@ -94,6 +91,29 @@
   color: var(--bugzia-text);
   -webkit-user-select: text;
   user-select: text;
+  /* 玻璃透镜深度：顶部内高光(折射) + 底部内阴影(内凹) + 极轻外投影。
+     外投影压在 1px 余量内，不被 .card 的 overflow:hidden 裁切。 */
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.65),
+    inset 0 -1px 1.5px rgba(31, 36, 40, 0.06),
+    0 1px 1px rgba(31, 36, 40, 0.04);
+  transition: box-shadow 0.18s ease, background 0.18s ease;
+}
+
+.input:hover:not(:focus) {
+  background: rgba(255, 255, 255, 0.8);
+}
+
+/* 聚焦态：框微亮 + 内壁淡蓝描边环与柔光。蓝色复用既有用户气泡蓝
+   (ChatView.css 的 rgba(86,122,214))，不引入新色。inset 描边环贴内壁，
+   不受 .card 的 overflow:hidden 裁切，同时作为可见聚焦指示器(a11y)。 */
+.input:focus {
+  background: rgba(255, 255, 255, 0.86);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.8),
+    inset 0 0 0 1px rgba(86, 122, 214, 0.45),
+    inset 0 0 9px rgba(86, 122, 214, 0.12),
+    inset 0 -1px 1.5px rgba(31, 36, 40, 0.05);
 }
 
 .input::placeholder {

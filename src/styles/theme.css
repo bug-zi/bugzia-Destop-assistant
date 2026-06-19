@@ -15,6 +15,19 @@
   --bugzia-text: #1f2428;
   --bugzia-text-weak: rgba(31, 36, 40, 0.58);
 
+  /* Result-overlay panel styling. INDEPENDENT of the global glass theme above;
+     only the result window's CSS reads these. Defaults mirror the original
+     hardcoded result-panel values (see ResultAppearanceSettings::default). */
+  --bugzia-result-bg-a: 0.34;
+  --bugzia-result-radius: 12px;
+  --bugzia-result-blur: 18px;
+  --bugzia-result-font-scale: 1;
+  --bugzia-result-row-gap: 6px;
+  --bugzia-result-item-radius: 9px;
+  --bugzia-result-row-pad: 6px;
+  --bugzia-result-hover-alpha: 0.72;
+  --bugzia-result-scrollbar-w: 8px;
+
   --bugzia-bar-height: 64px;
 }
 
