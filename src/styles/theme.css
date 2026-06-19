@@ -1,0 +1,35 @@
+:root {
+  /* Light-white glass theme.
+     These vars are user-customizable later via Settings (RGB + Alpha). */
+  --bugzia-bg-r: 255;
+  --bugzia-bg-g: 255;
+  --bugzia-bg-b: 255;
+  --bugzia-bg-a: 0.34;
+
+  --bugzia-border: rgba(255, 255, 255, 0.4);
+  --bugzia-input-bg: rgba(255, 255, 255, 0.72);
+  --bugzia-radius: 12px;
+  --bugzia-blur: 18px;
+  --bugzia-font-scale: 1;
+
+  --bugzia-text: #1f2428;
+  --bugzia-text-weak: rgba(31, 36, 40, 0.58);
+
+  --bugzia-bar-height: 64px;
+}
+
+/* Transparent host so the OS transparent window shows the desktop through it. */
+html,
+body,
+#root {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  background: transparent;
+  overflow: hidden;
+  font-family: "Segoe UI", -apple-system, "PingFang SC", "Microsoft YaHei",
+    sans-serif;
+  color: var(--bugzia-text);
+  -webkit-user-select: none;
+  user-select: none;
+}

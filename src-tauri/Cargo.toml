@@ -1,0 +1,35 @@
+[package]
+name = "bugzia"
+version = "0.1.0"
+description = "A Tauri App"
+authors = ["you"]
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[lib]
+# The `_lib` suffix may seem redundant but it is necessary
+# to make the lib name unique and wouldn't conflict with the bin name.
+# This seems to be only an issue on Windows, see https://github.com/rust-lang/cargo/issues/8519
+name = "bugzia_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon", "image"] }
+tauri-plugin-opener = "2"
+tauri-plugin-global-shortcut = "2"
+tauri-plugin-autostart = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# API Key secure storage in the OS credential store (Windows Credential Manager).
+# keyring v3 does NOT enable any platform backend by default (falls back to an
+# in-memory mock store, so secrets are lost on restart) -> enable windows-native.
+keyring = { version = "3", features = ["windows-native"] }
+# OpenAI-compatible HTTP + SSE streaming. rustls-tls avoids native-tls/Schannel on Windows.
+reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls", "gzip", "brotli"] }
+# StreamExt over the reqwest byte stream for line-by-line SSE parsing.
+futures-util = "0.3"
+

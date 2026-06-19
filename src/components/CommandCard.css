@@ -1,0 +1,185 @@
+.card {
+  position: relative;
+  box-sizing: border-box;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: rgba(
+    var(--bugzia-bg-r),
+    var(--bugzia-bg-g),
+    var(--bugzia-bg-b),
+    var(--bugzia-bg-a)
+  );
+  backdrop-filter: blur(var(--bugzia-blur));
+  -webkit-backdrop-filter: blur(var(--bugzia-blur));
+  border: 1px solid var(--bugzia-border);
+  border-radius: var(--bugzia-radius);
+  box-shadow: 0 6px 20px rgba(31, 36, 40, 0.12);
+}
+
+/* Full-card drag layer sits behind interactive elements so empty areas move
+   the window, while the input / buttons stay clickable. Disabled when locked. */
+.drag-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+}
+
+.bar-row {
+  position: relative;
+  z-index: 1;
+  flex: 0 0 auto;
+  height: var(--bugzia-bar-height);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 8px 0 12px;
+}
+
+.grip {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 24px;
+  height: 100%;
+  color: var(--bugzia-text-weak);
+  cursor: grab;
+}
+
+.grip:active {
+  cursor: grabbing;
+}
+
+/* Spark (star) — the result-overlay toggle button. Mirrors the gear's look on
+   the left edge; `.active` (overlay open) fills the star + lifts the chip. */
+.spark {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  flex: 0 0 auto;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--bugzia-text-weak);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.spark:hover {
+  background: rgba(255, 255, 255, 0.4);
+  color: var(--bugzia-text);
+}
+
+.spark.active {
+  color: var(--bugzia-text);
+  background: rgba(255, 255, 255, 0.55);
+}
+
+.input {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 38px;
+  border: none;
+  outline: none;
+  background: var(--bugzia-input-bg);
+  border-radius: 9px;
+  padding: 0 12px;
+  font-size: calc(15px * var(--bugzia-font-scale));
+  color: var(--bugzia-text);
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+.input::placeholder {
+  color: var(--bugzia-text-weak);
+}
+
+/* One-line status (生成中 / 已回复 / 错误). Sits between input and gear without
+   stretching the bar: capped width, ellipsized, weak color. */
+.status {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 120px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: calc(12px * var(--bugzia-font-scale));
+  color: var(--bugzia-text-weak);
+  user-select: none;
+}
+
+.gear {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  flex: 0 0 auto;
+  border: none;
+  background: transparent;
+  color: var(--bugzia-text-weak);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.gear:hover {
+  background: rgba(255, 255, 255, 0.4);
+  color: var(--bugzia-text);
+}
+
+.result-panel {
+  position: relative;
+  z-index: 1;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: 6px 12px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  color: var(--bugzia-text-weak);
+  font-size: calc(14px * var(--bugzia-font-scale));
+}
+
+.result-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.toolbar-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--bugzia-border);
+  background: var(--bugzia-input-bg);
+  color: var(--bugzia-text);
+  border-radius: 7px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.toolbar-btn.active {
+  color: var(--bugzia-text);
+  background: rgba(255, 255, 255, 0.95);
+}
+
+.result-empty {
+  flex: 1 1 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 16px;
+  line-height: 1.6;
+}
