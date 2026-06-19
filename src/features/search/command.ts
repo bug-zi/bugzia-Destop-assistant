@@ -1,6 +1,6 @@
 import { openUrl } from "@tauri-apps/plugin-opener";
 
-export type CommandMode = "ai" | "web" | "file";
+export type CommandMode = "ai" | "web" | "file" | "weather" | "trans" | "help";
 
 export interface ParsedCommand {
   mode: CommandMode;
@@ -12,6 +12,38 @@ export interface SearchEngine {
   name: string;
   url: (q: string) => string;
 }
+
+/**
+ * Declarative command registry (spec §8). `parseCommand` walks this table, so
+ * adding a new `/command` only means appending an entry here — no more if-else
+ * branches to touch. `description` powers `/help`.
+ *
+ * Triggers:
+ *   `<prefix> <arg>`  -> { mode, query: arg }   (e.g. "/weather 北京")
+ *   `<prefix>`        -> { mode, query: "" }    (e.g. "/help", argless)
+ *   alias matches work the same way. The single-char "?" alias is special-cased
+ *   in `parseCommand` so `?北京` (no space) also resolves to web, matching legacy.
+ */
+export interface CommandDef {
+  mode: CommandMode;
+  /** Leading trigger incl. the slash, e.g. "/weather". Omit on the AI default. */
+  prefix?: string;
+  /** Extra triggers, e.g. "?" (web), "/天气" (weather). */
+  aliases?: string[];
+  /** Shown by `/help`. */
+  description: string;
+  /** Hidden from `/help` (still parsed). */
+  hidden?: boolean;
+}
+
+export const COMMANDS: CommandDef[] = [
+  { mode: "web", prefix: "/web", aliases: ["?"], description: "用默认浏览器搜索" },
+  { mode: "file", prefix: "/file", description: "搜索本地文件" },
+  { mode: "ai", prefix: "/ai", description: "强制 AI 对话" },
+  { mode: "weather", prefix: "/weather", aliases: ["/天气"], description: "查询城市天气" },
+  { mode: "trans", prefix: "/trans", aliases: ["/翻译"], description: "翻译文本（中英自动互译）" },
+  { mode: "help", prefix: "/help", aliases: ["/?"], description: "查看所有命令" },
+];
 
 /** Built-in engines per spec §3.2. Default engine is configurable later via Settings. */
 export const SEARCH_ENGINES: SearchEngine[] = [
@@ -40,19 +72,44 @@ export const SEARCH_ENGINES: SearchEngine[] = [
 const DEFAULT_ENGINE = SEARCH_ENGINES[0];
 
 /**
- * Parse raw input into a command per spec §8:
+ * Parse raw input into a command by walking `COMMANDS` (spec §8):
  *   plain text      -> AI chat
  *   `?...` / `/web` -> browser search
  *   `/file`         -> local file search
  *   `/ai`           -> force AI chat
+ *   `/weather`      -> city weather
+ *   `/trans`        -> translate
+ *   `/help`         -> list commands
+ *
+ * Behavior for the legacy prefixes (web/file/ai/?) is byte-for-byte preserved;
+ * see the regression cases in the plan's verification section.
  */
 export function parseCommand(input: string): ParsedCommand {
   const text = input.trim();
   if (!text) return { mode: "ai", query: "" };
-  if (text.startsWith("/web ")) return { mode: "web", query: text.slice(5).trim() };
-  if (text.startsWith("/file ")) return { mode: "file", query: text.slice(6).trim() };
-  if (text.startsWith("/ai ")) return { mode: "ai", query: text.slice(4).trim() };
-  if (text.startsWith("?")) return { mode: "web", query: text.slice(1).trim() };
+
+  // The single-char "?" alias has no space requirement ("?北京" is valid), so it
+  // is resolved before the registry sweep. Everything past the "?" is the query.
+  if (text.startsWith("?")) {
+    return { mode: "web", query: text.slice(1).trim() };
+  }
+
+  // Registry sweep: longest-prefix-first isn't needed (no prefix is a prefix of
+  // another in COMMANDS), so a stable forward scan is enough.
+  for (const c of COMMANDS) {
+    if (!c.prefix) continue;
+    const triggers = [c.prefix, ...(c.aliases ?? [])];
+    for (const t of triggers) {
+      // Argless hit, e.g. "/help" exactly.
+      if (text === t) return { mode: c.mode, query: "" };
+      // "<prefix> <arg>" hit.
+      if (text.startsWith(t + " ")) {
+        return { mode: c.mode, query: text.slice(t.length + 1).trim() };
+      }
+    }
+  }
+
+  // Fallback: treat the whole line as an AI prompt.
   return { mode: "ai", query: text };
 }
 

@@ -15,12 +15,12 @@
   overflow-y: auto;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--bugzia-result-row-gap);
   padding-right: 2px;
 }
 
 .file-scroll::-webkit-scrollbar {
-  width: 8px;
+  width: var(--bugzia-result-scrollbar-w);
 }
 .file-scroll::-webkit-scrollbar-thumb {
   background: rgba(31, 36, 40, 0.22);
@@ -31,15 +31,15 @@
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 6px 8px;
-  border-radius: calc(var(--bugzia-radius) * 0.55);
+  padding: var(--bugzia-result-row-pad) calc(var(--bugzia-result-row-pad) + 2px);
+  border-radius: var(--bugzia-result-item-radius);
   border: 1px solid transparent;
   cursor: pointer;
   transition: background 0.12s ease, border-color 0.12s ease;
 }
 
 .file-row:hover {
-  background: var(--bugzia-input-bg);
+  background: rgba(255, 255, 255, var(--bugzia-result-hover-alpha));
   border-color: var(--bugzia-border);
 }
 

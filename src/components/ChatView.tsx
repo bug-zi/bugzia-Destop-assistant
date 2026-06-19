@@ -1,8 +1,30 @@
-import { useEffect, useRef } from "react";
+import { type MouseEvent, type ReactNode, useEffect, useRef } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import type { ChatMessage } from "../features/ai/chat";
 import "./ChatView.css";
+
+/** Render markdown links so they open in the SYSTEM BROWSER, not by navigating
+ *  the result window's webview. An in-webview navigation replaces the React app
+ *  with the external page — the user gets stuck on it and can't get back to the
+ *  chat (this is exactly what trapped the window on a raw weather JSON page that
+ *  contained a worldweatheronline image URL). Any URL in any message is routed
+ *  here, so the webview can never be navigated away from the app. */
+function MarkdownLink({ href, children }: { href?: string; children?: ReactNode }) {
+  return (
+    <a
+      href={href}
+      onClick={(e: MouseEvent<HTMLAnchorElement>) => {
+        if (!href) return;
+        e.preventDefault();
+        openUrl(href).catch(() => undefined);
+      }}
+    >
+      {children}
+    </a>
+  );
+}
 
 interface ChatViewProps {
   messages: ChatMessage[];
@@ -58,7 +80,9 @@ export default function ChatView({ messages, generating, onStop, onClear }: Chat
               {m.role === "assistant" ? (
                 <div className="bubble-md">
                   {m.content ? (
-                    <ReactMarkdown remarkPlugins={[remarkGfm]}>{m.content}</ReactMarkdown>
+                    <ReactMarkdown remarkPlugins={[remarkGfm]} components={{ a: MarkdownLink }}>
+                      {m.content}
+                    </ReactMarkdown>
                   ) : (
                     <span className="bubble-placeholder">{generating ? "…" : "(空)"}</span>
                   )}

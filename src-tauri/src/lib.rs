@@ -1,8 +1,9 @@
 mod ai;
 mod file_search;
 mod settings;
+mod weather;
 
-use ai::{chat, clear_context, get_messages, stop_chat, test_ai_connection};
+use ai::{ask_once, ask_once_stream, chat, clear_context, get_messages, stop_chat, test_ai_connection};
 use file_search::{open_file, reveal_file, search_files};
 use settings::{clear_api_key, load_api_key, load_settings, save_api_key, save_settings};
 
@@ -16,6 +17,18 @@ fn focus_main(app: &AppHandle) {
     if let Some(win) = app.get_webview_window("main") {
         let _ = win.show();
         let _ = win.set_focus();
+    }
+}
+
+/// Pin (or unpin) the result overlay above every other window. Driven by the
+/// result window's pin button. Implemented in Rust rather than the frontend
+/// because the result window's capability (`capabilities/result.json`) lacks
+/// `allow-set-always-on-top` — a backend command has full window access
+/// regardless of the caller's ACL.
+#[tauri::command]
+fn set_result_always_on_top(app: AppHandle, top: bool) {
+    if let Some(win) = app.get_webview_window("result") {
+        let _ = win.set_always_on_top(top);
     }
 }
 
@@ -94,6 +107,7 @@ pub fn run() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
         .plugin(global_shortcut)
         .plugin(tauri_plugin_autostart::init(
             MacosLauncher::LaunchAgent,
@@ -116,9 +130,13 @@ pub fn run() {
             clear_context,
             get_messages,
             test_ai_connection,
+            ask_once,
+            ask_once_stream,
             search_files,
             open_file,
             reveal_file,
+            weather::weather,
+            set_result_always_on_top,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

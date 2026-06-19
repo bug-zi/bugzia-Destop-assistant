@@ -26,6 +26,20 @@ export function streamChat(prompt: string, onEvent: (e: ChatEvent) => void): Pro
   return invoke("chat", { prompt, onEvent: ch });
 }
 
+/**
+ * Streaming one-shot (context-free) turn. Mirrors `streamChat` but calls the
+ * `ask_once_stream` command, which answers a single self-contained `prompt`
+ * with no conversation history and does NOT commit to `ChatState`. Used by
+ * `/trans` so a rich dictionary-style translation streams in token-by-token
+ * without polluting the main chat context. Aborts via the same `stop_chat` as
+ * `streamChat` (the backend shares the `ChatState.abort` flag).
+ */
+export function streamOnce(prompt: string, onEvent: (e: ChatEvent) => void): Promise<void> {
+  const ch = new Channel<ChatEvent>();
+  ch.onmessage = onEvent;
+  return invoke("ask_once_stream", { prompt, onEvent: ch });
+}
+
 /** Abort the in-flight generation (takes effect at the next streamed token). */
 export function stopChat(): Promise<void> {
   return invoke("stop_chat");

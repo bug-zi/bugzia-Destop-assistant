@@ -39,27 +39,6 @@ function SparkIcon({ active }: { active: boolean }) {
   );
 }
 
-/** Six-dot vertical grip — the dedicated drag handle. Sits to the LEFT of the
- *  spark so dragging the window never collides with the spark's click. */
-function GripIcon() {
-  return (
-    <svg
-      width="14"
-      height="18"
-      viewBox="0 0 24 24"
-      fill="currentColor"
-      aria-hidden="true"
-    >
-      <circle cx="9" cy="6" r="1.6" />
-      <circle cx="9" cy="12" r="1.6" />
-      <circle cx="9" cy="18" r="1.6" />
-      <circle cx="15" cy="6" r="1.6" />
-      <circle cx="15" cy="12" r="1.6" />
-      <circle cx="15" cy="18" r="1.6" />
-    </svg>
-  );
-}
-
 function GearIcon() {
   return (
     <svg
@@ -107,16 +86,14 @@ export default function InputBar({
 
   return (
     <div className="bar-row">
-      {/* Dedicated drag grip — a SIBLING of the input AND the spark button,
-          never an ancestor, so their mousedowns are never swallowed by window
-          drag (see project 踩坑 note on data-tauri-drag-region). */}
+      {/* 隐形拖动层：删掉可见 grip 后，拖输入框之外的空白处移动窗口。与
+          input/button 同级（非祖先）故不吞它们的 mousedown（见项目踩坑笔记）；
+          locked 时禁用拖动。 */}
       <div
-        className="grip"
+        className="drag-layer"
         data-tauri-drag-region={locked ? undefined : true}
         title={locked ? "位置已锁定" : "拖动卡片"}
-      >
-        <GripIcon />
-      </div>
+      />
       {/* Spark (star) toggles the result overlay: click to show, click again to
           hide. Filled + highlighted while the overlay is open. */}
       <button

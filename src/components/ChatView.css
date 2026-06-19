@@ -50,8 +50,16 @@
   overflow-y: auto;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--bugzia-result-row-gap);
   padding-right: 2px;
+}
+
+.chat-scroll::-webkit-scrollbar {
+  width: var(--bugzia-result-scrollbar-w);
+}
+.chat-scroll::-webkit-scrollbar-thumb {
+  background: rgba(31, 36, 40, 0.22);
+  border-radius: 4px;
 }
 
 .chat-empty {
@@ -73,7 +81,7 @@
 .bubble {
   max-width: 88%;
   padding: 8px 11px;
-  border-radius: 11px;
+  border-radius: var(--bugzia-result-item-radius);
   font-size: calc(14px * var(--bugzia-font-scale));
   line-height: 1.55;
   word-break: break-word;
