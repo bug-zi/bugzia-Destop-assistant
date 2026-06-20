@@ -123,22 +123,24 @@ export async function ensurePetWindow(): Promise<WebviewWindow> {
  * main bar). All math in LOGICAL pixels. Used only when the user has not yet
  * placed the pet themselves (no saved pet.x/y, or the -1 sentinel).
  */
-async function defaultPlacement(): Promise<void> {
+async function defaultPlacement(w = DEFAULT_W, h = DEFAULT_H): Promise<void> {
   const main = getCurrentWindow();
   const pet = (await WebviewWindow.getByLabel(LABEL)) ?? (await ensurePetWindow());
   const sf = await main.scaleFactor();
   const mon = await currentMonitor();
   const waW = mon ? mon.size.width / sf : DEFAULT_W * 6;
   const waH = mon ? mon.size.height / sf : DEFAULT_H * 6;
-  const w = DEFAULT_W;
-  const h = DEFAULT_H;
-  const x = Math.round(waW - w - 24); // 24px right margin
-  const y = Math.round(waH - h - 80); // ~80px above the taskbar
+  // Honour the caller's size (so "reset position" keeps a resized window) while
+  // still clamping to the minimums.
+  const cw = Math.max(MIN_W, w);
+  const ch = Math.max(MIN_H, h);
+  const x = Math.round(waW - cw - 24); // 24px right margin
+  const y = Math.round(waH - ch - 80); // ~80px above the taskbar
 
   suppressGeomPersist = true;
   try {
     await pet.setPosition(new LogicalPosition(x, y));
-    await pet.setSize(new LogicalSize(w, h));
+    await pet.setSize(new LogicalSize(cw, ch));
   } finally {
     // Move/resize events from our own setPosition/setSize land asynchronously;
     // stay suppressed briefly so they aren't persisted as a "user placement".
@@ -167,7 +169,7 @@ export async function showPetWindow(saved?: PetGeom): Promise<void> {
       }, 60);
     }
   } else {
-    await defaultPlacement();
+    await defaultPlacement(saved?.w ?? DEFAULT_W, saved?.h ?? DEFAULT_H);
   }
   try {
     await pet.show();

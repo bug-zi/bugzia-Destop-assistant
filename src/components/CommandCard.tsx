@@ -482,6 +482,21 @@ export default function CommandCard() {
     void invoke("pet_set_locked", { locked: settings.pet.locked }).catch(logErr("pet lock"));
   }, [settings?.pet.locked, settings?.pet.enabled]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // "Reset position" button (Settings) sets pet.x/y to the -1 sentinel.
+  // showPetWindow routes x<0 to defaultPlacement (lower-right), so re-invoking
+  // it here moves the already-open window to the default spot. No loop:
+  // defaultPlacement suppresses its own move event (petWindow.ts), so x stays
+  // -1 and this effect doesn't re-fire until the user places it again.
+  useEffect(() => {
+    const pet = settings?.pet;
+    if (!pet?.enabled) return;
+    if (pet.x < 0 || pet.y < 0) {
+      void showPetWindow({ x: pet.x, y: pet.y, w: pet.w, h: pet.h }).catch(
+        logErr("reset pet pos"),
+      );
+    }
+  }, [settings?.pet.x, settings?.pet.y, settings?.pet.enabled]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // Persist the pet window's geometry when the USER moves/resizes it, so a
   // manual placement + size survives an app restart. Programmatic placements on
   // show are suppressed in petWindow.ts.
