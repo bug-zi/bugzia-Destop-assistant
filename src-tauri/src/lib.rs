@@ -7,9 +7,12 @@ use ai::{ask_once, ask_once_stream, chat, clear_context, get_messages, stop_chat
 use file_search::{open_file, reveal_file, search_files};
 use settings::{clear_api_key, load_api_key, load_settings, save_api_key, save_settings};
 
+use std::fs;
+use std::path::PathBuf;
+
 use tauri::menu::{CheckMenuItem, IsMenuItem, Menu, MenuItem};
 use tauri::tray::TrayIconBuilder;
-use tauri::{AppHandle, Manager, Wry};
+use tauri::{AppHandle, Emitter, Manager, Wry};
 use tauri_plugin_autostart::{AutoLaunchManager, MacosLauncher};
 
 /// Show + focus the main bar. Used by the global shortcut and the tray menu.
@@ -32,6 +35,42 @@ fn set_result_always_on_top(app: AppHandle, top: bool) {
     }
 }
 
+/// Lock the pet overlay = click-through (pointer reaches the desktop). Backend
+/// command (not frontend) because the pet window's capability lacks
+/// `allow-set-ignore-cursor-events`. Fire-and-forget like `set_result_always_on_top`.
+#[tauri::command]
+fn pet_set_locked(app: AppHandle, locked: bool) {
+    if let Some(win) = app.get_webview_window("pet") {
+        let _ = win.set_ignore_cursor_events(locked);
+    }
+}
+
+/// Pin (or unpin) the pet overlay above every other window. Same ACL rationale
+/// as `pet_set_locked` / `set_result_always_on_top`.
+#[tauri::command]
+fn pet_set_always_on_top(app: AppHandle, top: bool) {
+    if let Some(win) = app.get_webview_window("pet") {
+        let _ = win.set_always_on_top(top);
+    }
+}
+
+/// Resolve (and create if missing) the pet sprite directory under appDataDir,
+/// returning its absolute path. The frontend uses this both to know where to
+/// load pose PNGs from (via `convertFileSrc`) and to open in the file manager
+/// from Settings. Creating it here means `openPath` never targets a missing dir.
+#[tauri::command]
+fn pet_assets_dir(app: AppHandle) -> Result<String, String> {
+    let dir: PathBuf = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("resolve app_data_dir: {e}"))?
+        .join("pet");
+    fs::create_dir_all(&dir).map_err(|e| format!("create pet dir: {e}"))?;
+    dir.to_str()
+        .map(|s| s.to_string())
+        .ok_or_else(|| "pet dir path is not valid UTF-8".to_string())
+}
+
 /// Make the OS launch-on-boot state match the user's stored intent. Called at
 /// startup so a user who disabled autostart stays disabled across restarts —
 /// we never force-enable over their choice.
@@ -48,20 +87,30 @@ fn sync_autostart(app: &AppHandle) {
     }
 }
 
-/// Build the system tray: show / autostart toggle / quit. The autostart item
-/// starts checked to match the synced intent and re-syncs on every toggle.
+/// Build the system tray: show / autostart toggle / pet toggle / quit. The
+/// autostart item starts checked to match the synced intent and re-syncs on every
+/// toggle. The pet item mirrors `settings.pet.enabled`; toggling it only persists
+/// the intent and emits `settings://changed` — the MAIN window does the actual
+/// overlay create/show (frontend ACL), not Rust.
 fn build_tray(app: &AppHandle) -> tauri::Result<()> {
     let want_autostart = load_settings(app.clone())
         .map(|s| s.system.autostart)
         .unwrap_or(true);
+    let want_pet = load_settings(app.clone())
+        .map(|s| s.pet.enabled)
+        .unwrap_or(false);
 
     let show_item = MenuItem::with_id(app, "show", "显示 Bugzia", true, None::<&str>)?;
     let autostart_item =
         CheckMenuItem::with_id(app, "autostart", "开机自启", true, want_autostart, None::<&str>)?;
+    let pet_item =
+        CheckMenuItem::with_id(app, "pet", "桌宠", true, want_pet, None::<&str>)?;
     let quit_item = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
     // Heterogeneous item types need an explicit `&[&dyn IsMenuItem]` coercion.
     let autostart_for_handler = autostart_item.clone();
-    let items: &[&dyn IsMenuItem<Wry>] = &[&show_item, &autostart_item, &quit_item];
+    let pet_for_handler = pet_item.clone();
+    let items: &[&dyn IsMenuItem<Wry>] =
+        &[&show_item, &autostart_item, &pet_item, &quit_item];
     let menu = Menu::with_items(app, items)?;
 
     TrayIconBuilder::new()
@@ -85,6 +134,18 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
                 let mgr = app.state::<AutoLaunchManager>();
                 let _ = if next { mgr.enable() } else { mgr.disable() };
                 let _ = autostart_for_handler.set_checked(next);
+            }
+            "pet" => {
+                // Toggle the pet-enabled intent, persist it, mirror the
+                // checkmark, and signal MAIN to apply it. Rust does NOT create
+                // the overlay window (frontend ACL); main reloads settings on
+                // "settings://changed" and drives window creation.
+                let mut s = load_settings(app.clone()).unwrap_or_default();
+                s.pet.enabled = !s.pet.enabled;
+                let next = s.pet.enabled;
+                let _ = save_settings(app.clone(), s);
+                let _ = app.emit("settings://changed", ());
+                let _ = pet_for_handler.set_checked(next);
             }
             _ => {}
         })
@@ -137,6 +198,9 @@ pub fn run() {
             reveal_file,
             weather::weather,
             set_result_always_on_top,
+            pet_set_locked,
+            pet_set_always_on_top,
+            pet_assets_dir,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
