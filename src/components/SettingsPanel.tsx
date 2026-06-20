@@ -3,6 +3,7 @@ import type {
   AppSettings,
   AppearanceSettings,
   AiSettings,
+  PetSettings,
   ResultAppearanceSettings,
   SearchSettings,
   WaveformSettings,
@@ -11,6 +12,8 @@ import type {
 import { loadApiKey, saveApiKey, clearApiKey, testAiConnection } from "../features/settings/settingsStore";
 import { SEARCH_ENGINES } from "../features/search/command";
 import { open } from "@tauri-apps/plugin-dialog";
+import { openPath } from "@tauri-apps/plugin-opener";
+import { invoke } from "@tauri-apps/api/core";
 import "./SettingsPanel.css";
 
 interface SettingsPanelProps {
@@ -32,6 +35,8 @@ export default function SettingsPanel({ settings, onChange, onClose }: SettingsP
     onChange({ ...settings, result: { ...settings.result, ...p } });
   const patchWaveform = (p: Partial<WaveformSettings>) =>
     onChange({ ...settings, waveform: { ...settings.waveform, ...p } });
+  const patchPet = (p: Partial<PetSettings>) =>
+    onChange({ ...settings, pet: { ...settings.pet, ...p } });
 
   // API key lives in the OS keyring, separate from the JSON settings, so it has
   // its own local state + explicit save.
@@ -117,10 +122,23 @@ export default function SettingsPanel({ settings, onChange, onClose }: SettingsP
     patchSearch({ ignore_dirs: settings.search.ignore_dirs.filter((_, i) => i !== index) });
   }
 
+  /** Open the pet sprite dir in the file manager (created on demand by the
+   *  backend `pet_assets_dir` command, so it always exists). The user drops
+   *  idle.png / blink.png / happy.png here to swap art — no rebuild needed. */
+  async function handleOpenPetFolder() {
+    try {
+      const dir = await invoke<string>("pet_assets_dir");
+      await openPath(dir);
+    } catch (e) {
+      console.error("[bugzia] open pet folder", e);
+    }
+  }
+
   const a = settings.appearance;
   const r = settings.result;
   const ai = settings.ai;
   const wf = settings.waveform;
+  const pet = settings.pet;
 
   return (
     <div className="settings-overlay" onClick={onClose}>
@@ -333,6 +351,82 @@ export default function SettingsPanel({ settings, onChange, onClose }: SettingsP
 
             <ColorRow label="结果上限" value={settings.search.max_results} min={1} max={500} step={1}
               fmt={(v) => String(v)} onChange={(v) => patchSearch({ max_results: v })} />
+          </section>
+
+          {/* ── 桌宠 ── */}
+          <section className="settings-section">
+            <h4>桌宠</h4>
+            <label className="check-row">
+              <input
+                type="checkbox"
+                checked={pet.enabled}
+                onChange={(e) => patchPet({ enabled: e.target.checked })}
+              />
+              启用桌宠
+            </label>
+            <label className="check-row">
+              <input
+                type="checkbox"
+                checked={pet.always_on_top}
+                onChange={(e) => patchPet({ always_on_top: e.target.checked })}
+              />
+              置顶
+            </label>
+            <label className="check-row">
+              <input
+                type="checkbox"
+                checked={pet.locked}
+                onChange={(e) => patchPet({ locked: e.target.checked })}
+              />
+              锁定（鼠标穿透，不响应点击/拖动）
+            </label>
+            <ColorRow label="缩放" value={pet.scale} min={0.5} max={2} step={0.05}
+              fmt={(v) => `${v.toFixed(2)}×`} onChange={(v) => patchPet({ scale: v })} />
+            <ColorRow label="眨眼间隔" value={pet.blink_interval_ms} min={1000} max={10000} step={500}
+              fmt={(v) => `${v}ms`} onChange={(v) => patchPet({ blink_interval_ms: v })} />
+            <label className="check-row">
+              <input
+                type="checkbox"
+                checked={pet.speech_enabled}
+                onChange={(e) => patchPet({ speech_enabled: e.target.checked })}
+              />
+              随机说话
+            </label>
+            <ColorRow label="说话间隔" value={pet.speech_interval_ms} min={5000} max={60000} step={1000}
+              fmt={(v) => `${(v / 1000).toFixed(0)}s`} onChange={(v) => patchPet({ speech_interval_ms: v })} />
+            <Field label="口癖（每行一条）">
+              <textarea
+                className="f-input"
+                rows={4}
+                value={pet.speech_lines.join("\n")}
+                onChange={(e) =>
+                  patchPet({
+                    speech_lines: e.target.value
+                      .split("\n")
+                      .filter((s, i, arr) => s !== "" || i < arr.length - 1),
+                  })
+                }
+              />
+              <div className="hint">点击桌宠或空闲时会随机冒一条。</div>
+            </Field>
+            <Field label="素材">
+              <div className="list-add-row">
+                <button className="key-btn" type="button" onClick={handleOpenPetFolder}>
+                  打开素材文件夹…
+                </button>
+                <button
+                  className="key-btn ghost"
+                  type="button"
+                  onClick={() => patchPet({ x: -1, y: -1 })}
+                  title="下次显示时回到屏幕右下角"
+                >
+                  重置位置
+                </button>
+              </div>
+              <div className="hint">
+                把 idle.png / blink.png / happy.png 放进该文件夹即换肤，无需重启。缺失时显示占位图。
+              </div>
+            </Field>
           </section>
         </div>
       </div>
