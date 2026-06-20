@@ -122,9 +122,8 @@ export default function SettingsPanel({ settings, onChange, onClose }: SettingsP
     patchSearch({ ignore_dirs: settings.search.ignore_dirs.filter((_, i) => i !== index) });
   }
 
-  /** Open the pet sprite dir in the file manager (created on demand by the
-   *  backend `pet_assets_dir` command, so it always exists). The user drops
-   *  pose PNGs here to swap art — no rebuild needed. */
+  /** Open the reserved pet asset dir. The current default art is bundled, so
+   *  files here do not override the displayed pet until config-based skins land. */
   async function handleOpenPetFolder() {
     try {
       const dir = await invoke<string>("pet_assets_dir");
@@ -432,7 +431,7 @@ export default function SettingsPanel({ settings, onChange, onClose }: SettingsP
                 </button>
               </div>
               <div className="hint">
-                把 idle.png / blink.png / happy.png 放进该文件夹即可换肤；可选补充 drag.png / surprise.png / sleep.png，缺失时复用基础姿态。
+                当前默认使用内置新角色素材；完整精灵图换肤会在动作配置接入后启用。
               </div>
             </Field>
           </section>

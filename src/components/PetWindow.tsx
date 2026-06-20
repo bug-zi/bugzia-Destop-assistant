@@ -2,13 +2,25 @@ import { useEffect, useReducer, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { loadSettings } from "../features/settings/settingsStore";
 import { DEFAULT_PET, type PetSettings } from "../features/settings/settingsTypes";
 import "./PetWindow.css";
+import idleSrc from "../../assets/pet/vampire-sprite-v1/poses/idle.png";
+import blinkSrc from "../../assets/pet/vampire-sprite-v1/poses/blink.png";
+import happySrc from "../../assets/pet/vampire-sprite-v1/poses/happy.png";
+import dragSrc from "../../assets/pet/vampire-sprite-v1/poses/drag.png";
+import surpriseSrc from "../../assets/pet/vampire-sprite-v1/poses/surprise.png";
+import sleepSrc from "../../assets/pet/vampire-sprite-v1/poses/sleep.png";
 
 type Pose = "idle" | "blink" | "happy" | "drag" | "surprise" | "sleep";
-const POSES: Pose[] = ["idle", "blink", "happy", "drag", "surprise", "sleep"];
+const BUILTIN_POSE_SRCS: Record<Pose, string> = {
+  idle: idleSrc,
+  blink: blinkSrc,
+  happy: happySrc,
+  drag: dragSrc,
+  surprise: surpriseSrc,
+  sleep: sleepSrc,
+};
 const POSE_ASSET_FALLBACKS: Record<Pose, Pose[]> = {
   idle: ["idle"],
   blink: ["blink", "idle"],
@@ -94,7 +106,7 @@ export default function PetWindow() {
   const lastInteractionRef = useRef(Date.now());
   const lastClickAtRef = useRef(0);
   const [bubble, setBubble] = useState<string | null>(null);
-  const [poseSrcs, setPoseSrcs] = useState<Record<Pose, string> | null>(null);
+  const [poseSrcs] = useState<Record<Pose, string>>(BUILTIN_POSE_SRCS);
   const [failed, setFailed] = useState<Partial<Record<Pose, boolean>>>({});
   const rootRef = useRef<HTMLDivElement>(null);
 
@@ -106,8 +118,8 @@ export default function PetWindow() {
     poseRef.current = pose;
   }, [pose]);
 
-  // Load settings on mount + resolve pose image URLs from ${appDataDir}/pet (the
-  // dir is created by the `pet_assets_dir` backend command).
+  // Load settings on mount. The displayed art is the bundled vampire-sprite-v1
+  // set, so stale user-dir pose PNGs cannot accidentally bring back old art.
   useEffect(() => {
     let alive = true;
     (async () => {
@@ -115,16 +127,6 @@ export default function PetWindow() {
       if (!alive) return;
       settingsRef.current = s.pet;
       setSettings(s.pet);
-      try {
-        const dir = await invoke<string>("pet_assets_dir");
-        if (!alive) return;
-        const map = {} as Record<Pose, string>;
-        for (const p of POSES) map[p] = convertFileSrc(`${dir}/${p}.png`);
-        setPoseSrcs(map);
-        setFailed({}); // clear stale per-pose failures on a fresh resolve
-      } catch (e) {
-        console.error("[bugzia] resolve pet asset dir", e);
-      }
     })();
     return () => {
       alive = false;
