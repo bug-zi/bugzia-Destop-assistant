@@ -45,15 +45,33 @@ export function isDrag(
 const DRAG_THRESHOLD = 5;
 
 /** Inline SVG shown when a pose PNG is missing or fails to load, so the feature
- *  is fully testable before real art exists. A pink chibi-ish labeled card. */
+ *  is fully testable before real art exists. A pink chibi-ish labeled card.
+ *  Eyes + mouth DIFFER per pose: otherwise idle/blink/happy look identical and
+ *  the user can't tell she blinked or is happy. idle=open dots, blink=closed
+ *  lines, happy=upward arcs + a wider smile. */
 function placeholderDataUri(pose: Pose): string {
+  const eyes =
+    pose === "blink"
+      ? // closed eyes: short horizontal lines
+        `<line x1='55' y1='74' x2='67' y2='74' stroke='#5a3b46' stroke-width='3' stroke-linecap='round'/>` +
+        `<line x1='83' y1='74' x2='95' y2='74' stroke='#5a3b46' stroke-width='3' stroke-linecap='round'/>`
+      : pose === "happy"
+        ? // smiling eyes: upward arcs (^ ^)
+          `<path d='M54 77 Q61 68 68 77' stroke='#5a3b46' stroke-width='3' fill='none' stroke-linecap='round'/>` +
+          `<path d='M82 77 Q89 68 96 77' stroke='#5a3b46' stroke-width='3' fill='none' stroke-linecap='round'/>`
+        : // idle: open round eyes
+          `<circle cx='61' cy='74' r='6' fill='#5a3b46'/>` +
+          `<circle cx='89' cy='74' r='6' fill='#5a3b46'/>`;
+  const mouth =
+    pose === "happy"
+      ? `<path d='M56 90 Q75 110 94 90' stroke='#5a3b46' stroke-width='3' fill='none' stroke-linecap='round'/>`
+      : `<path d='M62 92 Q75 101 88 92' stroke='#5a3b46' stroke-width='3' fill='none' stroke-linecap='round'/>`;
   const svg =
     `<svg xmlns='http://www.w3.org/2000/svg' width='150' height='200'>` +
     `<rect width='150' height='200' rx='18' fill='#FFB7C5' opacity='0.9'/>` +
     `<circle cx='75' cy='78' r='44' fill='#ffffff'/>` +
-    `<circle cx='61' cy='74' r='6' fill='#5a3b46'/>` +
-    `<circle cx='89' cy='74' r='6' fill='#5a3b46'/>` +
-    `<path d='M62 92 Q75 102 88 92' stroke='#5a3b46' stroke-width='3' fill='none' stroke-linecap='round'/>` +
+    eyes +
+    mouth +
     `<text x='75' y='150' font-size='13' text-anchor='middle' fill='#ffffff'>${pose}</text>` +
     `<text x='75' y='172' font-size='11' text-anchor='middle' fill='#ffffff' opacity='0.85'>占位</text>` +
     `</svg>`;
@@ -124,7 +142,7 @@ export default function PetWindow() {
   // Revert a transient pose (happy / blink) back to idle.
   useEffect(() => {
     if (pose === "idle") return;
-    const ms = pose === "blink" ? 150 : 800;
+    const ms = pose === "blink" ? 200 : 800;
     const t = window.setTimeout(() => dispatch({ type: "to-idle" }), ms);
     return () => window.clearTimeout(t);
   }, [pose]);
@@ -157,14 +175,16 @@ export default function PetWindow() {
     const lines = settings.speech_lines;
     let stopped = false;
     let timer = 0;
-    const schedule = () => {
+    // First bubble arrives soon after enable (so the user sees she can talk
+    // without waiting the full interval); subsequent ones are spaced by `iv`.
+    const schedule = (delay: number) => {
       timer = window.setTimeout(() => {
         if (stopped) return;
         setBubble(randomLine(lines));
-        schedule();
-      }, iv);
+        schedule(iv);
+      }, delay);
     };
-    schedule();
+    schedule(1500);
     return () => {
       stopped = true;
       window.clearTimeout(timer);
