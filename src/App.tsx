@@ -2,6 +2,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import CommandCard from "./components/CommandCard";
 import ResultWindow from "./components/ResultWindow";
 import SettingsWindow from "./components/SettingsWindow";
+import WaveformWindow from "./components/WaveformWindow";
 import "./styles/theme.css";
 
 /**
@@ -11,6 +12,7 @@ import "./styles/theme.css";
 function App() {
   const label = getCurrentWindow().label;
   if (label === "result") return <ResultWindow />;
+  if (label === "waveform") return <WaveformWindow />;
   if (label === "settings") return <SettingsWindow />;
   return <CommandCard />;
 }

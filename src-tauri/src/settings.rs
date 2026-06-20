@@ -246,6 +246,72 @@ impl Default for SystemSettings {
     }
 }
 
+/// Desktop waveform visualizer settings. The overlay floats on the desktop and
+/// dances to whatever the system is playing (captured via WASAPI loopback). The
+/// whole section is `#[serde(default)]` on `AppSettings`, so a legacy
+/// settings.json (which predates this feature) loads the sakura-pink defaults
+/// below instead of wiping. Manual `Default` keeps a fresh install visually
+/// correct rather than collapsing to 0/false.
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct WaveformSettings {
+    /// Master on/off for the overlay + audio capture.
+    pub enabled: bool,
+    /// Pin above all other windows while playing.
+    pub always_on_top: bool,
+    /// Lock = mouse click-through (overlay stops intercepting desktop clicks).
+    pub locked: bool,
+    /// 0.0 - 1.0 overlay opacity.
+    pub opacity: f32,
+    /// Loudness gain applied in the frontend (lets quiet passages still move).
+    pub sensitivity: f32,
+    /// Base petal size in px.
+    pub petal_size: f32,
+    /// Max concurrent petals on screen.
+    pub petal_density: u32,
+    /// Fall-speed multiplier.
+    pub drift_speed: f32,
+    /// Primary petal color (default sakura pink #FFB7C5).
+    pub color_r: u8,
+    pub color_g: u8,
+    pub color_b: u8,
+    /// Highlight / water-line color (default white).
+    pub accent_r: u8,
+    pub accent_g: u8,
+    pub accent_b: u8,
+    /// Overlay window position in LOGICAL px. `-1` sentinel = never placed by
+    /// the user; show then uses the default (lower-center) placement instead.
+    pub x: i32,
+    pub y: i32,
+    /// Overlay window size in LOGICAL px.
+    pub w: u32,
+    pub h: u32,
+}
+
+impl Default for WaveformSettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            always_on_top: false,
+            locked: false,
+            opacity: 0.95,
+            sensitivity: 1.0,
+            petal_size: 14.0,
+            petal_density: 60,
+            drift_speed: 1.0,
+            color_r: 255,
+            color_g: 183,
+            color_b: 197, // #FFB7C5 sakura pink
+            accent_r: 255,
+            accent_g: 255,
+            accent_b: 255,
+            x: -1,
+            y: -1,
+            w: 380,
+            h: 200,
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
 pub struct AppSettings {
     #[serde(default)]
@@ -260,6 +326,8 @@ pub struct AppSettings {
     pub search: SearchSettings,
     #[serde(default)]
     pub system: SystemSettings,
+    #[serde(default)]
+    pub waveform: WaveformSettings,
 }
 
 // ---------------------------------------------------------------------------

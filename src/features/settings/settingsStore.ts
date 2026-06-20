@@ -13,6 +13,7 @@ export async function loadSettings(): Promise<AppSettings> {
       ai: { ...DEFAULT_SETTINGS.ai, ...s.ai },
       search: { ...DEFAULT_SETTINGS.search, ...s.search },
       system: { ...DEFAULT_SETTINGS.system, ...s.system },
+      waveform: { ...DEFAULT_SETTINGS.waveform, ...s.waveform },
     };
   } catch (e) {
     console.error("[bugzia] load_settings failed", e);
