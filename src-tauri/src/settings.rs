@@ -58,6 +58,15 @@ impl Default for AppearanceSettings {
 /// `settings.json` (which lacks this section) loading instead of wiping it.
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct ResultAppearanceSettings {
+    /// Overlay background red (independent of the global card color so the panel
+    /// can be tuned separately). serde default keeps a legacy settings.json (which
+    /// predates these fields) loading instead of wiping the whole section.
+    #[serde(default = "default_result_bg")]
+    pub bg_r: u8,
+    #[serde(default = "default_result_bg")]
+    pub bg_g: u8,
+    #[serde(default = "default_result_bg")]
+    pub bg_b: u8,
     /// 0.0 - 1.0, overlay background alpha (overrides the global bg_a here).
     pub bg_a: f32,
     /// overlay corner radius in px.
@@ -78,6 +87,13 @@ pub struct ResultAppearanceSettings {
     pub scrollbar_w: f32,
 }
 
+/// serde default for `ResultAppearanceSettings::bg_r/g/b` — 255 (white), so a
+/// legacy settings.json missing these fields keeps the panel white instead of
+/// collapsing to 0 (black) or wiping the whole section via `unwrap_or_default`.
+fn default_result_bg() -> u8 {
+    255
+}
+
 impl Default for ResultAppearanceSettings {
     fn default() -> Self {
         // Mirrors the original hardcoded result-panel values. row_gap (previously
@@ -85,6 +101,9 @@ impl Default for ResultAppearanceSettings {
         // unified to a midpoint; every other value reproduces the prior pixel so a
         // fresh install is visually unchanged.
         Self {
+            bg_r: default_result_bg(),
+            bg_g: default_result_bg(),
+            bg_b: default_result_bg(),
             bg_a: 0.34,
             radius: 12.0,
             blur: 18.0,
@@ -409,5 +428,42 @@ pub fn clear_api_key() -> Result<(), String> {
         Ok(_) => Ok(()),
         Err(keyring::Error::NoEntry) => Ok(()),
         Err(e) => Err(format!("delete keyring: {e}")),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Regression guard for the result-panel color-picker change: a legacy
+    /// `settings.json` whose `result` section predates the `bg_r/g/b` fields
+    /// must still deserialize — with bg defaulting to white (255), not failing
+    /// and wiping the whole section via `unwrap_or_default`. The field-level
+    /// `#[serde(default = "default_result_bg")]` is what makes this work; if
+    /// someone removes it, this test fails and saves the user's tuning.
+    #[test]
+    fn legacy_result_without_bg_rgb_loads_white() {
+        let json = r#"{
+            "result": {
+                "bg_a": 0.5,
+                "radius": 20.0,
+                "blur": 5.0,
+                "font_scale": 1.2,
+                "row_gap": 10.0,
+                "item_radius": 7.0,
+                "row_pad": 4.0,
+                "hover_alpha": 0.6,
+                "scrollbar_w": 10.0
+            }
+        }"#;
+        let parsed: AppSettings = serde_json::from_str(json).unwrap();
+        let r = parsed.result;
+        // bg defaulted to white, not 0/black, not a full-section wipe:
+        assert_eq!((r.bg_r, r.bg_g, r.bg_b), (255, 255, 255));
+        // other fields preserved (proves it didn't fall back to Default::default,
+        // which would have reset bg_a to 0.34 / scrollbar_w to 8.0):
+        assert_eq!(r.bg_a, 0.5);
+        assert_eq!(r.radius, 20.0);
+        assert_eq!(r.scrollbar_w, 10.0);
     }
 }

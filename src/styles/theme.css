@@ -18,6 +18,9 @@
   /* Result-overlay panel styling. INDEPENDENT of the global glass theme above;
      only the result window's CSS reads these. Defaults mirror the original
      hardcoded result-panel values (see ResultAppearanceSettings::default). */
+  --bugzia-result-bg-r: 255;
+  --bugzia-result-bg-g: 255;
+  --bugzia-result-bg-b: 255;
   --bugzia-result-bg-a: 0.34;
   --bugzia-result-radius: 12px;
   --bugzia-result-blur: 18px;

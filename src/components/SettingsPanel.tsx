@@ -156,12 +156,9 @@ export default function SettingsPanel({ settings, onChange, onClose }: SettingsP
           {/* ── 外观 ── */}
           <section className="settings-section">
             <h4>外观</h4>
-            <ColorRow label="R 红" value={a.bg_r} min={0} max={255} step={1}
-              onChange={(v) => patchAppearance({ bg_r: v })} />
-            <ColorRow label="G 绿" value={a.bg_g} min={0} max={255} step={1}
-              onChange={(v) => patchAppearance({ bg_g: v })} />
-            <ColorRow label="B 蓝" value={a.bg_b} min={0} max={255} step={1}
-              onChange={(v) => patchAppearance({ bg_b: v })} />
+            <ColorField label="背景色"
+              r={a.bg_r} g={a.bg_g} b={a.bg_b}
+              onChange={(hex) => { const c = hexToRgb(hex); patchAppearance({ bg_r: c.r, bg_g: c.g, bg_b: c.b }); }} />
             <ColorRow label="透明度" value={a.bg_a} min={0} max={1} step={0.01}
               fmt={(v) => v.toFixed(2)} onChange={(v) => patchAppearance({ bg_a: v })} />
             <ColorRow label="模糊" value={a.blur} min={0} max={40} step={1}
@@ -175,6 +172,9 @@ export default function SettingsPanel({ settings, onChange, onClose }: SettingsP
           {/* ── 结果面板 ── */}
           <section className="settings-section">
             <h4>结果面板</h4>
+            <ColorField label="背景色"
+              r={r.bg_r} g={r.bg_g} b={r.bg_b}
+              onChange={(hex) => { const c = hexToRgb(hex); patchResult({ bg_r: c.r, bg_g: c.g, bg_b: c.b }); }} />
             <ColorRow label="透明度" value={r.bg_a} min={0} max={1} step={0.01}
               fmt={(v) => v.toFixed(2)} onChange={(v) => patchResult({ bg_a: v })} />
             <ColorRow label="圆角" value={r.radius} min={0} max={30} step={1}
@@ -225,10 +225,10 @@ export default function SettingsPanel({ settings, onChange, onClose }: SettingsP
               fmt={(v) => `${v.toFixed(1)}×`} onChange={(v) => patchWaveform({ drift_speed: v })} />
             <ColorField label="主色"
               r={wf.color_r} g={wf.color_g} b={wf.color_b}
-              onChange={(hex) => patchWaveform(hexToRgb(hex, "color"))} />
+              onChange={(hex) => { const c = hexToRgb(hex); patchWaveform({ color_r: c.r, color_g: c.g, color_b: c.b }); }} />
             <ColorField label="高光"
               r={wf.accent_r} g={wf.accent_g} b={wf.accent_b}
-              onChange={(hex) => patchWaveform(hexToRgb(hex, "accent"))} />
+              onChange={(hex) => { const c = hexToRgb(hex); patchWaveform({ accent_r: c.r, accent_g: c.g, accent_b: c.b }); }} />
             <div className="list-add-row">
               <button className="key-btn" type="button"
                 onClick={() => patchWaveform({ x: -1, y: -1, w: 0 })}>
@@ -368,13 +368,11 @@ function ColorRow(props: {
   );
 }
 
-function hexToRgb(hex: string, prefix: "color" | "accent"): Partial<WaveformSettings> {
+/** Parse a #rrggbb hex string into RGB bytes. Shared by the card / result /
+ * waveform color pickers; each call site maps it onto its own field names. */
+function hexToRgb(hex: string): { r: number; g: number; b: number } {
   const n = parseInt(hex.slice(1), 16);
-  return {
-    [`${prefix}_r`]: (n >> 16) & 255,
-    [`${prefix}_g`]: (n >> 8) & 255,
-    [`${prefix}_b`]: n & 255,
-  } as Partial<WaveformSettings>;
+  return { r: (n >> 16) & 255, g: (n >> 8) & 255, b: n & 255 };
 }
 
 /** Label + native color picker row (主色 / 高光). Reuses the slider-row grid. */

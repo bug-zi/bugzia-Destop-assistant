@@ -7,9 +7,9 @@
   flex-direction: column;
   overflow: hidden;
   background: rgba(
-    var(--bugzia-bg-r),
-    var(--bugzia-bg-g),
-    var(--bugzia-bg-b),
+    var(--bugzia-result-bg-r),
+    var(--bugzia-result-bg-g),
+    var(--bugzia-result-bg-b),
     var(--bugzia-result-bg-a)
   );
   backdrop-filter: blur(var(--bugzia-result-blur));

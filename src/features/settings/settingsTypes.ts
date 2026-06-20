@@ -29,6 +29,12 @@ export interface AppearanceSettings {
  * names MUST match the serde JSON keys exactly.
  */
 export interface ResultAppearanceSettings {
+  /** Overlay background red (independent of the global card color). */
+  bg_r: number;
+  /** Overlay background green. */
+  bg_g: number;
+  /** Overlay background blue. */
+  bg_b: number;
   /** 0..1, overlay background alpha (overrides the global bg_a on the overlay) */
   bg_a: number;
   /** overlay corner radius in px */
@@ -154,6 +160,9 @@ export const DEFAULT_APPEARANCE: AppearanceSettings = {
 };
 
 export const DEFAULT_RESULT: ResultAppearanceSettings = {
+  bg_r: 255,
+  bg_g: 255,
+  bg_b: 255,
   bg_a: 0.34,
   radius: 12,
   blur: 18,
