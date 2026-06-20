@@ -1,0 +1,74 @@
+/* Desktop pet overlay. The window itself is transparent + borderless, so only
+   the sprite (and optional speech bubble) is visible. The root fills the window
+   and carries the pointer handlers; .pet-look applies the look-toward-cursor
+   translate; .pet-sprite owns the breathing scale animation (two elements so the
+   two transforms never collide). */
+.pet-root {
+  position: relative;
+  width: 100vw;
+  height: 100vh;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  background: transparent;
+  cursor: grab;
+  --look-x: 0;
+  --look-y: 0;
+}
+.pet-root:active {
+  cursor: grabbing;
+}
+
+.pet-look {
+  transform: translate(calc(var(--look-x) * 5px), calc(var(--look-y) * 4px));
+  transition: transform 140ms ease-out;
+}
+
+.pet-sprite {
+  display: block;
+  width: calc(150px * var(--scale, 1));
+  height: auto;
+  max-height: calc(200px * var(--scale, 1));
+  user-select: none;
+  -webkit-user-drag: none;
+  pointer-events: none;
+  animation: pet-breathe 3.4s ease-in-out infinite;
+  filter: drop-shadow(0 6px 6px rgba(0, 0, 0, 0.28));
+}
+
+@keyframes pet-breathe {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.025);
+  }
+}
+
+.pet-bubble {
+  position: absolute;
+  bottom: calc(190px * var(--scale, 1));
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(255, 255, 255, 0.94);
+  color: #5a3b46;
+  padding: 6px 12px;
+  border-radius: 12px;
+  font-size: 14px;
+  white-space: nowrap;
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.18);
+  animation: pet-pop 0.25s ease-out;
+  pointer-events: none;
+}
+
+@keyframes pet-pop {
+  from {
+    opacity: 0;
+    transform: translateX(-50%) translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
+}
