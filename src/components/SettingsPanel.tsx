@@ -5,6 +5,7 @@ import type {
   AiSettings,
   ResultAppearanceSettings,
   SearchSettings,
+  WaveformSettings,
   WindowSettings,
 } from "../features/settings/settingsTypes";
 import { loadApiKey, saveApiKey, clearApiKey, testAiConnection } from "../features/settings/settingsStore";
@@ -29,6 +30,8 @@ export default function SettingsPanel({ settings, onChange, onClose }: SettingsP
     onChange({ ...settings, window: { ...settings.window, ...p } });
   const patchResult = (p: Partial<ResultAppearanceSettings>) =>
     onChange({ ...settings, result: { ...settings.result, ...p } });
+  const patchWaveform = (p: Partial<WaveformSettings>) =>
+    onChange({ ...settings, waveform: { ...settings.waveform, ...p } });
 
   // API key lives in the OS keyring, separate from the JSON settings, so it has
   // its own local state + explicit save.
@@ -117,6 +120,7 @@ export default function SettingsPanel({ settings, onChange, onClose }: SettingsP
   const a = settings.appearance;
   const r = settings.result;
   const ai = settings.ai;
+  const wf = settings.waveform;
 
   return (
     <div className="settings-overlay" onClick={onClose}>
@@ -152,12 +156,9 @@ export default function SettingsPanel({ settings, onChange, onClose }: SettingsP
           {/* ── 外观 ── */}
           <section className="settings-section">
             <h4>外观</h4>
-            <ColorRow label="R 红" value={a.bg_r} min={0} max={255} step={1}
-              onChange={(v) => patchAppearance({ bg_r: v })} />
-            <ColorRow label="G 绿" value={a.bg_g} min={0} max={255} step={1}
-              onChange={(v) => patchAppearance({ bg_g: v })} />
-            <ColorRow label="B 蓝" value={a.bg_b} min={0} max={255} step={1}
-              onChange={(v) => patchAppearance({ bg_b: v })} />
+            <ColorField label="背景色"
+              r={a.bg_r} g={a.bg_g} b={a.bg_b}
+              onChange={(hex) => { const c = hexToRgb(hex); patchAppearance({ bg_r: c.r, bg_g: c.g, bg_b: c.b }); }} />
             <ColorRow label="透明度" value={a.bg_a} min={0} max={1} step={0.01}
               fmt={(v) => v.toFixed(2)} onChange={(v) => patchAppearance({ bg_a: v })} />
             <ColorRow label="模糊" value={a.blur} min={0} max={40} step={1}
@@ -171,6 +172,9 @@ export default function SettingsPanel({ settings, onChange, onClose }: SettingsP
           {/* ── 结果面板 ── */}
           <section className="settings-section">
             <h4>结果面板</h4>
+            <ColorField label="背景色"
+              r={r.bg_r} g={r.bg_g} b={r.bg_b}
+              onChange={(hex) => { const c = hexToRgb(hex); patchResult({ bg_r: c.r, bg_g: c.g, bg_b: c.b }); }} />
             <ColorRow label="透明度" value={r.bg_a} min={0} max={1} step={0.01}
               fmt={(v) => v.toFixed(2)} onChange={(v) => patchResult({ bg_a: v })} />
             <ColorRow label="圆角" value={r.radius} min={0} max={30} step={1}
@@ -189,6 +193,49 @@ export default function SettingsPanel({ settings, onChange, onClose }: SettingsP
               fmt={(v) => v.toFixed(2)} onChange={(v) => patchResult({ hover_alpha: v })} />
             <ColorRow label="滚动条宽度" value={r.scrollbar_w} min={4} max={14} step={1}
               fmt={(v) => `${v}px`} onChange={(v) => patchResult({ scrollbar_w: v })} />
+          </section>
+
+          {/* ── 桌面波形 ── */}
+          <section className="settings-section">
+            <h4>桌面波形</h4>
+            <label className="check-row">
+              <input type="checkbox" checked={wf.enabled}
+                onChange={(e) => patchWaveform({ enabled: e.target.checked })} />
+              启用桌面波形（采集系统声音，花瓣随音量飘落）
+            </label>
+            <label className="check-row">
+              <input type="checkbox" checked={wf.always_on_top}
+                onChange={(e) => patchWaveform({ always_on_top: e.target.checked })} />
+              置顶显示
+            </label>
+            <label className="check-row">
+              <input type="checkbox" checked={wf.locked}
+                onChange={(e) => patchWaveform({ locked: e.target.checked })} />
+              锁定（鼠标穿透，无法拖动）
+            </label>
+            <ColorRow label="透明度" value={wf.opacity} min={0.1} max={1} step={0.01}
+              fmt={(v) => v.toFixed(2)} onChange={(v) => patchWaveform({ opacity: v })} />
+            <ColorRow label="灵敏度" value={wf.sensitivity} min={0.1} max={3} step={0.1}
+              fmt={(v) => `${v.toFixed(1)}×`} onChange={(v) => patchWaveform({ sensitivity: v })} />
+            <ColorRow label="花瓣大小" value={wf.petal_size} min={4} max={40} step={1}
+              fmt={(v) => `${v}px`} onChange={(v) => patchWaveform({ petal_size: v })} />
+            <ColorRow label="花瓣密度" value={wf.petal_density} min={10} max={150} step={1}
+              fmt={(v) => String(v)} onChange={(v) => patchWaveform({ petal_density: v })} />
+            <ColorRow label="飘落速度" value={wf.drift_speed} min={0.2} max={3} step={0.1}
+              fmt={(v) => `${v.toFixed(1)}×`} onChange={(v) => patchWaveform({ drift_speed: v })} />
+            <ColorField label="主色"
+              r={wf.color_r} g={wf.color_g} b={wf.color_b}
+              onChange={(hex) => { const c = hexToRgb(hex); patchWaveform({ color_r: c.r, color_g: c.g, color_b: c.b }); }} />
+            <ColorField label="高光"
+              r={wf.accent_r} g={wf.accent_g} b={wf.accent_b}
+              onChange={(hex) => { const c = hexToRgb(hex); patchWaveform({ accent_r: c.r, accent_g: c.g, accent_b: c.b }); }} />
+            <div className="list-add-row">
+              <button className="key-btn" type="button"
+                onClick={() => patchWaveform({ x: -1, y: -1, w: 0 })}>
+                重置位置
+              </button>
+            </div>
+            <div className="hint">重置后按屏幕下方居中默认位置显示。</div>
           </section>
 
           {/* ── AI ── */}
@@ -317,6 +364,37 @@ function ColorRow(props: {
         onChange={(e) => onChange(Number(e.target.value))}
       />
       <span className="color-value">{fmt ? fmt(value) : value}</span>
+    </div>
+  );
+}
+
+/** Parse a #rrggbb hex string into RGB bytes. Shared by the card / result /
+ * waveform color pickers; each call site maps it onto its own field names. */
+function hexToRgb(hex: string): { r: number; g: number; b: number } {
+  const n = parseInt(hex.slice(1), 16);
+  return { r: (n >> 16) & 255, g: (n >> 8) & 255, b: n & 255 };
+}
+
+/** Label + native color picker row (主色 / 高光). Reuses the slider-row grid. */
+function ColorField(props: {
+  label: string;
+  r: number;
+  g: number;
+  b: number;
+  onChange: (hex: string) => void;
+}) {
+  const { label, r, g, b, onChange } = props;
+  const hex = "#" + [r, g, b].map((v) => v.toString(16).padStart(2, "0")).join("");
+  return (
+    <div className="color-row">
+      <span className="color-label">{label}</span>
+      <input
+        className="color-picker"
+        type="color"
+        value={hex}
+        onChange={(e) => onChange(e.target.value)}
+      />
+      <span className="color-value">{hex.toUpperCase()}</span>
     </div>
   );
 }

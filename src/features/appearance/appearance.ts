@@ -27,6 +27,9 @@ export function applyAppearanceVars(a: AppearanceSettings): void {
  */
 export function applyResultVars(res: ResultAppearanceSettings): void {
   const el = document.documentElement.style;
+  el.setProperty("--bugzia-result-bg-r", String(res.bg_r));
+  el.setProperty("--bugzia-result-bg-g", String(res.bg_g));
+  el.setProperty("--bugzia-result-bg-b", String(res.bg_b));
   el.setProperty("--bugzia-result-bg-a", String(res.bg_a));
   el.setProperty("--bugzia-result-radius", `${res.radius}px`);
   el.setProperty("--bugzia-result-blur", `${res.blur}px`);

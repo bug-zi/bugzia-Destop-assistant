@@ -58,6 +58,15 @@ impl Default for AppearanceSettings {
 /// `settings.json` (which lacks this section) loading instead of wiping it.
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct ResultAppearanceSettings {
+    /// Overlay background red (independent of the global card color so the panel
+    /// can be tuned separately). serde default keeps a legacy settings.json (which
+    /// predates these fields) loading instead of wiping the whole section.
+    #[serde(default = "default_result_bg")]
+    pub bg_r: u8,
+    #[serde(default = "default_result_bg")]
+    pub bg_g: u8,
+    #[serde(default = "default_result_bg")]
+    pub bg_b: u8,
     /// 0.0 - 1.0, overlay background alpha (overrides the global bg_a here).
     pub bg_a: f32,
     /// overlay corner radius in px.
@@ -78,6 +87,13 @@ pub struct ResultAppearanceSettings {
     pub scrollbar_w: f32,
 }
 
+/// serde default for `ResultAppearanceSettings::bg_r/g/b` — 255 (white), so a
+/// legacy settings.json missing these fields keeps the panel white instead of
+/// collapsing to 0 (black) or wiping the whole section via `unwrap_or_default`.
+fn default_result_bg() -> u8 {
+    255
+}
+
 impl Default for ResultAppearanceSettings {
     fn default() -> Self {
         // Mirrors the original hardcoded result-panel values. row_gap (previously
@@ -85,6 +101,9 @@ impl Default for ResultAppearanceSettings {
         // unified to a midpoint; every other value reproduces the prior pixel so a
         // fresh install is visually unchanged.
         Self {
+            bg_r: default_result_bg(),
+            bg_g: default_result_bg(),
+            bg_b: default_result_bg(),
             bg_a: 0.34,
             radius: 12.0,
             blur: 18.0,
@@ -282,6 +301,47 @@ pub struct PetSettings {
     pub h: u32,
 }
 
+/// Desktop waveform visualizer settings. The overlay floats on the desktop and
+/// dances to whatever the system is playing (captured via WASAPI loopback). The
+/// whole section is `#[serde(default)]` on `AppSettings`, so a legacy
+/// settings.json (which predates this feature) loads the sakura-pink defaults
+/// below instead of wiping. Manual `Default` keeps a fresh install visually
+/// correct rather than collapsing to 0/false.
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct WaveformSettings {
+    /// Master on/off for the overlay + audio capture.
+    pub enabled: bool,
+    /// Pin above all other windows while playing.
+    pub always_on_top: bool,
+    /// Lock = mouse click-through (overlay stops intercepting desktop clicks).
+    pub locked: bool,
+    /// 0.0 - 1.0 overlay opacity.
+    pub opacity: f32,
+    /// Loudness gain applied in the frontend (lets quiet passages still move).
+    pub sensitivity: f32,
+    /// Base petal size in px.
+    pub petal_size: f32,
+    /// Max concurrent petals on screen.
+    pub petal_density: u32,
+    /// Fall-speed multiplier.
+    pub drift_speed: f32,
+    /// Primary petal color (default sakura pink #FFB7C5).
+    pub color_r: u8,
+    pub color_g: u8,
+    pub color_b: u8,
+    /// Highlight / water-line color (default white).
+    pub accent_r: u8,
+    pub accent_g: u8,
+    pub accent_b: u8,
+    /// Overlay window position in LOGICAL px. `-1` sentinel = never placed by
+    /// the user; show then uses the default (lower-center) placement instead.
+    pub x: i32,
+    pub y: i32,
+    /// Overlay window size in LOGICAL px.
+    pub w: u32,
+    pub h: u32,
+}
+
 fn default_pet_speech_lines() -> Vec<String> {
     ["哇酷哇酷", "好厉害!", "嘿嘿", "喜欢!", "诶嘿~"]
         .iter()
@@ -308,6 +368,31 @@ impl Default for PetSettings {
     }
 }
 
+impl Default for WaveformSettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            always_on_top: false,
+            locked: false,
+            opacity: 0.95,
+            sensitivity: 1.0,
+            petal_size: 14.0,
+            petal_density: 60,
+            drift_speed: 1.0,
+            color_r: 255,
+            color_g: 183,
+            color_b: 197, // #FFB7C5 sakura pink
+            accent_r: 255,
+            accent_g: 255,
+            accent_b: 255,
+            x: -1,
+            y: -1,
+            w: 380,
+            h: 200,
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
 pub struct AppSettings {
     #[serde(default)]
@@ -324,6 +409,8 @@ pub struct AppSettings {
     pub system: SystemSettings,
     #[serde(default)]
     pub pet: PetSettings,
+    #[serde(default)]
+    pub waveform: WaveformSettings,
 }
 
 // ---------------------------------------------------------------------------
@@ -445,5 +532,37 @@ mod tests {
         assert!(!parsed.system.autostart); // preserved
         assert!(!parsed.pet.enabled); // pet defaulted
         assert!(parsed.pet.always_on_top);
+    }
+
+    /// Regression guard for the result-panel color-picker change: a legacy
+    /// `settings.json` whose `result` section predates the `bg_r/g/b` fields
+    /// must still deserialize — with bg defaulting to white (255), not failing
+    /// and wiping the whole section via `unwrap_or_default`. The field-level
+    /// `#[serde(default = "default_result_bg")]` is what makes this work; if
+    /// someone removes it, this test fails and saves the user's tuning.
+    #[test]
+    fn legacy_result_without_bg_rgb_loads_white() {
+        let json = r#"{
+            "result": {
+                "bg_a": 0.5,
+                "radius": 20.0,
+                "blur": 5.0,
+                "font_scale": 1.2,
+                "row_gap": 10.0,
+                "item_radius": 7.0,
+                "row_pad": 4.0,
+                "hover_alpha": 0.6,
+                "scrollbar_w": 10.0
+            }
+        }"#;
+        let parsed: AppSettings = serde_json::from_str(json).unwrap();
+        let r = parsed.result;
+        // bg defaulted to white, not 0/black, not a full-section wipe:
+        assert_eq!((r.bg_r, r.bg_g, r.bg_b), (255, 255, 255));
+        // other fields preserved (proves it didn't fall back to Default::default,
+        // which would have reset bg_a to 0.34 / scrollbar_w to 8.0):
+        assert_eq!(r.bg_a, 0.5);
+        assert_eq!(r.radius, 20.0);
+        assert_eq!(r.scrollbar_w, 10.0);
     }
 }

@@ -33,4 +33,8 @@ keyring = { version = "3", features = ["windows-native"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls", "gzip", "brotli"] }
 # StreamExt over the reqwest byte stream for line-by-line SSE parsing.
 futures-util = "0.3"
+# System-audio loopback capture (WASAPI) for the desktop waveform visualizer.
+# We build an INPUT stream on the DEFAULT OUTPUT device; cpal's WASAPI backend
+# opens a render endpoint in loopback mode, handing us whatever the speakers play.
+cpal = "0.15"
 

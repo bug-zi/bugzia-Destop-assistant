@@ -10,13 +10,18 @@ import { streamChat, streamOnce, stopChat, clearContext, type ChatEvent, type Ch
 import { loadSettings, saveSettings } from "../features/settings/settingsStore";
 import { openSettingsWindow } from "../features/settings/settingsWindow";
 import { applyAppearanceVars } from "../features/appearance/appearance";
-import type { AppSettings, WindowSettings, SettingsPatch } from "../features/settings/settingsTypes";
+import type { AppSettings, WaveformSettings, WindowSettings, SettingsPatch } from "../features/settings/settingsTypes";
 import {
   hideResultWindow,
   isResultVisible,
   onResultGeometryChange,
   showResultWindow,
 } from "../features/result/resultWindow";
+import {
+  hideWaveformWindow,
+  onWaveformGeometryChange,
+  showWaveformWindow,
+} from "../features/waveform/waveformWindow";
 import { EV, type FileResult, type ResultMode } from "../features/result/resultTypes";
 
 const COLLAPSED_H = 64;
@@ -110,6 +115,18 @@ export default function CommandCard() {
       const cur = settingsRef.current;
       if (!cur) return;
       update({ ...cur, window: { ...cur.window, ...p } });
+    },
+    [update],
+  );
+
+  /** Patch the waveform overlay section (settings.waveform) + debounced persist.
+   *  Backs the user drag/resize geometry; other fields arrive via the settings
+   *  panel broadcast / tray toggle merged into state below. */
+  const patchWaveform = useCallback(
+    (p: Partial<WaveformSettings>) => {
+      const cur = settingsRef.current;
+      if (!cur) return;
+      update({ ...cur, waveform: { ...cur.waveform, ...p } });
     },
     [update],
   );
@@ -247,6 +264,7 @@ export default function CommandCard() {
           ai: ev.payload.ai,
           search: ev.payload.search,
           window: { ...cur.window, locked: ev.payload.windowLocked },
+          waveform: ev.payload.waveform ?? cur.waveform,
         };
         update(merged);
         applyAppearanceVars(merged.appearance);
@@ -312,6 +330,113 @@ export default function CommandCard() {
       patchWindow(patch);
     });
   }, [patchWindow]);
+
+  // ── waveform overlay lifecycle ───────────────────────────────────────────
+  // The overlay window must be created from the frontend (ACL), and main is the
+  // sole settings.json writer, so all of this lives here. `enabled` drives the
+  // create/show + capture; pin + click-through are applied AFTER showWaveformWindow
+  // resolves so the window definitely exists before the backend commands target
+  // it (they'd otherwise error "waveform window not found").
+
+  // Tray "桌面波形" toggle persists in Rust + emits settings://changed. Reload the
+  // authoritative settings so our mirror — and the enabled effect below — sync.
+  useEffect(() => {
+    let unlisten: UnlistenFn | undefined;
+    let alive = true;
+    (async () => {
+      unlisten = await listen("settings://changed", () => {
+        void loadSettings()
+          .then((s) => {
+            if (!alive || !s) return;
+            settingsRef.current = s;
+            setSettings(s);
+          })
+          .catch(logErr("reload settings"));
+      });
+      if (!alive && unlisten) unlisten();
+    })();
+    return () => {
+      alive = false;
+      unlisten?.();
+    };
+  }, []);
+
+  // enabled: show + pin + lock + start capture, or stop capture + hide.
+  useEffect(() => {
+    if (!settings) return;
+    const wf = settings.waveform;
+    let cancelled = false;
+    (async () => {
+      if (wf.enabled) {
+        await showWaveformWindow(
+          wf.x >= 0 && wf.y >= 0 ? { x: wf.x, y: wf.y, w: wf.w, h: wf.h } : undefined,
+        ).catch(logErr("show waveform"));
+        if (cancelled) return;
+        // Window now exists: apply pin + click-through, then start audio capture.
+        await invoke("waveform_set_always_on_top", { top: wf.always_on_top }).catch(
+          logErr("waveform on_top"),
+        );
+        await invoke("waveform_set_locked", { locked: wf.locked }).catch(
+          logErr("waveform lock"),
+        );
+        await invoke("waveform_set_enabled", { enabled: true }).catch(
+          logErr("waveform_set_enabled"),
+        );
+      } else {
+        await invoke("waveform_set_enabled", { enabled: false }).catch(
+          logErr("waveform_set_enabled"),
+        );
+        await hideWaveformWindow();
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [settings?.waveform.enabled]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Live pin / click-through toggles while the overlay is already open.
+  useEffect(() => {
+    if (!settings?.waveform.enabled) return;
+    void invoke("waveform_set_always_on_top", { top: settings.waveform.always_on_top }).catch(
+      logErr("waveform on_top"),
+    );
+  }, [settings?.waveform.always_on_top, settings?.waveform.enabled]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (!settings?.waveform.enabled) return;
+    void invoke("waveform_set_locked", { locked: settings.waveform.locked }).catch(
+      logErr("waveform lock"),
+    );
+  }, [settings?.waveform.locked, settings?.waveform.enabled]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // "重置位置" resets x/y to the -1 sentinel -> while open, re-default the
+  // placement immediately so the user sees it move (not only on next toggle).
+  useEffect(() => {
+    if (!settings?.waveform.enabled) return;
+    if (settings.waveform.x < 0 || settings.waveform.y < 0) {
+      void showWaveformWindow(undefined).catch(logErr("waveform reposition"));
+    }
+  }, [settings?.waveform.x, settings?.waveform.y]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Forward live waveform appearance (color / sensitivity / density / ...) to the
+  // overlay every time the section changes, so tweaks render on the next frame.
+  useEffect(() => {
+    if (!settings) return;
+    emit("waveform://settings", settings.waveform).catch(logErr("emit waveform settings"));
+  }, [settings?.waveform]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Persist the waveform window's geometry when the USER moves/resizes it, so a
+  // manual placement + size survives an app restart. Main is the sole writer.
+  useEffect(() => {
+    onWaveformGeometryChange((g) => {
+      const patch: Partial<WaveformSettings> = {};
+      if (g.x !== undefined) patch.x = g.x;
+      if (g.y !== undefined) patch.y = g.y;
+      if (g.w !== undefined) patch.w = g.w;
+      if (g.h !== undefined) patch.h = g.h;
+      patchWaveform(patch);
+    });
+  }, [patchWaveform]);
 
   function resolveEngine(): SearchEngine {
     const s = settingsRef.current;

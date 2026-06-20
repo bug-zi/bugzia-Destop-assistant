@@ -45,6 +45,7 @@ export default function SettingsWindow() {
         ai: next.ai,
         search: next.search,
         windowLocked: next.window.locked,
+        waveform: next.waveform,
       });
     }, SAVE_DEBOUNCE_MS);
   }
@@ -67,6 +68,7 @@ export default function SettingsWindow() {
         ai: cur.ai,
         search: cur.search,
         windowLocked: cur.window.locked,
+        waveform: cur.waveform,
       });
     }
     getCurrentWindow().close().catch((e) => console.error("[bugzia] close settings", e));

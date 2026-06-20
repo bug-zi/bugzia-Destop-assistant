@@ -29,6 +29,12 @@ export interface AppearanceSettings {
  * names MUST match the serde JSON keys exactly.
  */
 export interface ResultAppearanceSettings {
+  /** Overlay background red (independent of the global card color). */
+  bg_r: number;
+  /** Overlay background green. */
+  bg_g: number;
+  /** Overlay background blue. */
+  bg_b: number;
   /** 0..1, overlay background alpha (overrides the global bg_a on the overlay) */
   bg_a: number;
   /** overlay corner radius in px */
@@ -92,6 +98,47 @@ export interface SystemSettings {
   autostart: boolean;
 }
 
+/**
+ * Desktop waveform visualizer settings. The overlay floats on the desktop and
+ * dances to whatever the system is playing (captured via WASAPI loopback on the
+ * Rust side). Frontend mirror of the Rust `WaveformSettings` (settings.rs);
+ * field names MUST match the serde JSON keys exactly. Geometry is LOGICAL px;
+ * `x/y = -1` is the "never placed by the user" sentinel -> default placement.
+ */
+export interface WaveformSettings {
+  /** Master on/off for the overlay + audio capture. */
+  enabled: boolean;
+  /** Pin above all other windows while playing. */
+  always_on_top: boolean;
+  /** Lock = mouse click-through (overlay stops intercepting desktop clicks). */
+  locked: boolean;
+  /** 0..1 overlay opacity. */
+  opacity: number;
+  /** Loudness gain applied in the frontend (quiet passages can still move). */
+  sensitivity: number;
+  /** Base petal size in px. */
+  petal_size: number;
+  /** Max concurrent petals on screen. */
+  petal_density: number;
+  /** Fall-speed multiplier. */
+  drift_speed: number;
+  /** Primary petal color (default sakura pink #FFB7C5). */
+  color_r: number;
+  color_g: number;
+  color_b: number;
+  /** Highlight / water-line color (default white). */
+  accent_r: number;
+  accent_g: number;
+  accent_b: number;
+  /** Overlay window position in LOGICAL px. `-1` sentinel = never placed by the
+   *  user; show then uses the default (lower-center) placement instead. */
+  x: number;
+  y: number;
+  /** Overlay window size in LOGICAL px. */
+  w: number;
+  h: number;
+}
+
 export interface AppSettings {
   appearance: AppearanceSettings;
   result: ResultAppearanceSettings;
@@ -99,6 +146,7 @@ export interface AppSettings {
   ai: AiSettings;
   search: SearchSettings;
   system: SystemSettings;
+  waveform: WaveformSettings;
 }
 
 export const DEFAULT_APPEARANCE: AppearanceSettings = {
@@ -112,6 +160,9 @@ export const DEFAULT_APPEARANCE: AppearanceSettings = {
 };
 
 export const DEFAULT_RESULT: ResultAppearanceSettings = {
+  bg_r: 255,
+  bg_g: 255,
+  bg_b: 255,
   bg_a: 0.34,
   radius: 12,
   blur: 18,
@@ -157,6 +208,27 @@ export const DEFAULT_SYSTEM: SystemSettings = {
   autostart: true,
 };
 
+export const DEFAULT_WAVEFORM: WaveformSettings = {
+  enabled: false,
+  always_on_top: false,
+  locked: false,
+  opacity: 0.95,
+  sensitivity: 1.0,
+  petal_size: 14.0,
+  petal_density: 60,
+  drift_speed: 1.0,
+  color_r: 255,
+  color_g: 183,
+  color_b: 197, // #FFB7C5 sakura pink
+  accent_r: 255,
+  accent_g: 255,
+  accent_b: 255,
+  x: -1, // sentinel: -1 = "never placed by user" -> default lower-center placement
+  y: -1,
+  w: 380,
+  h: 200,
+};
+
 export const DEFAULT_SETTINGS: AppSettings = {
   appearance: DEFAULT_APPEARANCE,
   result: DEFAULT_RESULT,
@@ -164,6 +236,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   ai: DEFAULT_AI,
   search: DEFAULT_SEARCH,
   system: DEFAULT_SYSTEM,
+  waveform: DEFAULT_WAVEFORM,
 };
 
 /**
@@ -178,4 +251,5 @@ export interface SettingsPatch {
   ai: AiSettings;
   search: SearchSettings;
   windowLocked: boolean;
+  waveform: WaveformSettings;
 }

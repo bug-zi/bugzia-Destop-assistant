@@ -1,6 +1,7 @@
 mod ai;
 mod file_search;
 mod settings;
+mod waveform;
 mod weather;
 
 use ai::{ask_once, ask_once_stream, chat, clear_context, get_messages, stop_chat, test_ai_connection};
@@ -87,11 +88,12 @@ fn sync_autostart(app: &AppHandle) {
     }
 }
 
-/// Build the system tray: show / autostart toggle / pet toggle / quit. The
-/// autostart item starts checked to match the synced intent and re-syncs on every
-/// toggle. The pet item mirrors `settings.pet.enabled`; toggling it only persists
-/// the intent and emits `settings://changed` — the MAIN window does the actual
-/// overlay create/show (frontend ACL), not Rust.
+/// Build the system tray: show / autostart toggle / pet toggle / waveform toggle
+/// / quit. The autostart item starts checked to match the synced intent and
+/// re-syncs on every toggle. The pet item mirrors `settings.pet.enabled` and the
+/// waveform item mirrors `settings.waveform.enabled`; toggling either only
+/// persists the intent and emits `settings://changed` — the MAIN window does the
+/// actual overlay create/show (+ capture start for waveform; frontend ACL), not Rust.
 fn build_tray(app: &AppHandle) -> tauri::Result<()> {
     let want_autostart = load_settings(app.clone())
         .map(|s| s.system.autostart)
@@ -99,18 +101,24 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
     let want_pet = load_settings(app.clone())
         .map(|s| s.pet.enabled)
         .unwrap_or(false);
+    let want_waveform = load_settings(app.clone())
+        .map(|s| s.waveform.enabled)
+        .unwrap_or(false);
 
     let show_item = MenuItem::with_id(app, "show", "显示 Bugzia", true, None::<&str>)?;
     let autostart_item =
         CheckMenuItem::with_id(app, "autostart", "开机自启", true, want_autostart, None::<&str>)?;
     let pet_item =
         CheckMenuItem::with_id(app, "pet", "桌宠", true, want_pet, None::<&str>)?;
+    let waveform_item =
+        CheckMenuItem::with_id(app, "waveform", "桌面波形", true, want_waveform, None::<&str>)?;
     let quit_item = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
     // Heterogeneous item types need an explicit `&[&dyn IsMenuItem]` coercion.
     let autostart_for_handler = autostart_item.clone();
     let pet_for_handler = pet_item.clone();
+    let waveform_for_handler = waveform_item.clone();
     let items: &[&dyn IsMenuItem<Wry>] =
-        &[&show_item, &autostart_item, &pet_item, &quit_item];
+        &[&show_item, &autostart_item, &pet_item, &waveform_item, &quit_item];
     let menu = Menu::with_items(app, items)?;
 
     TrayIconBuilder::new()
@@ -147,6 +155,19 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
                 let _ = app.emit("settings://changed", ());
                 let _ = pet_for_handler.set_checked(next);
             }
+            "waveform" => {
+                // Toggle the waveform-enabled intent, persist it, mirror the
+                // checkmark, and signal MAIN to apply it. The overlay window must
+                // be created from the frontend (ACL), so Rust does NOT create it
+                // here; main reloads settings on "settings://changed" and drives
+                // window creation + capture start.
+                let mut s = load_settings(app.clone()).unwrap_or_default();
+                s.waveform.enabled = !s.waveform.enabled;
+                let next = s.waveform.enabled;
+                let _ = save_settings(app.clone(), s);
+                let _ = app.emit("settings://changed", ());
+                let _ = waveform_for_handler.set_checked(next);
+            }
             _ => {}
         })
         .build(app)?;
@@ -175,6 +196,7 @@ pub fn run() {
             None::<Vec<&'static str>>,
         ))
         .manage(ai::ChatState::default())
+        .manage(waveform::WaveformState::default())
         .setup(|app| {
             sync_autostart(app.handle());
             build_tray(app.handle())?;
@@ -197,6 +219,9 @@ pub fn run() {
             open_file,
             reveal_file,
             weather::weather,
+            waveform::waveform_set_enabled,
+            waveform::waveform_set_locked,
+            waveform::waveform_set_always_on_top,
             set_result_always_on_top,
             pet_set_locked,
             pet_set_always_on_top,
