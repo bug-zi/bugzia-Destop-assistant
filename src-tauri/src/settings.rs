@@ -246,6 +246,68 @@ impl Default for SystemSettings {
     }
 }
 
+/// Desktop pet (Anya companion) settings. A self-contained floating overlay that
+/// idles (blink), looks toward the cursor, reacts to a click (petted + speech
+/// bubble), and can be dragged. Decoupled from Bugzia's other features — no
+/// audio / system events. The whole section is `#[serde(default)]` on
+/// `AppSettings`, so a legacy settings.json (which predates this feature) loads
+/// the defaults below instead of wiping. Manual `Default` keeps a fresh install
+/// visually correct rather than collapsing to 0/false.
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct PetSettings {
+    /// Master on/off for the overlay.
+    pub enabled: bool,
+    /// Pin above all other windows (the pet should be visible by default).
+    pub always_on_top: bool,
+    /// Lock = mouse click-through (pointer reaches the desktop; the pet's own
+    /// click/drag handlers stop firing — the expected behavior of "lock").
+    pub locked: bool,
+    /// Overall sprite scale multiplier (1.0 = native image size).
+    pub scale: f32,
+    /// Idle blink interval, ms.
+    pub blink_interval_ms: u32,
+    /// Whether the pet shows speech bubbles at all.
+    pub speech_enabled: bool,
+    /// Idle random-speech interval, ms.
+    pub speech_interval_ms: u32,
+    /// Speech-bubble lines (one chosen at random). User-editable in Settings.
+    #[serde(default = "default_pet_speech_lines")]
+    pub speech_lines: Vec<String>,
+    /// Overlay window position, LOGICAL px. `-1` sentinel = never placed by the
+    /// user; show then defaults to lower-right of the screen.
+    pub x: i32,
+    pub y: i32,
+    /// Overlay window size, LOGICAL px.
+    pub w: u32,
+    pub h: u32,
+}
+
+fn default_pet_speech_lines() -> Vec<String> {
+    ["哇酷哇酷", "好厉害!", "嘿嘿", "喜欢!", "诶嘿~"]
+        .iter()
+        .map(|s| s.to_string())
+        .collect()
+}
+
+impl Default for PetSettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            always_on_top: true,
+            locked: false,
+            scale: 1.0,
+            blink_interval_ms: 4000,
+            speech_enabled: true,
+            speech_interval_ms: 20000,
+            speech_lines: default_pet_speech_lines(),
+            x: -1,
+            y: -1,
+            w: 150,
+            h: 200,
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
 pub struct AppSettings {
     #[serde(default)]
@@ -260,6 +322,8 @@ pub struct AppSettings {
     pub search: SearchSettings,
     #[serde(default)]
     pub system: SystemSettings,
+    #[serde(default)]
+    pub pet: PetSettings,
 }
 
 // ---------------------------------------------------------------------------
@@ -341,5 +405,45 @@ pub fn clear_api_key() -> Result<(), String> {
         Ok(_) => Ok(()),
         Err(keyring::Error::NoEntry) => Ok(()),
         Err(e) => Err(format!("delete keyring: {e}")),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pet_settings_default_is_sensible() {
+        let p = PetSettings::default();
+        assert!(!p.enabled);
+        assert!(p.always_on_top); // pet should be visible by default
+        assert!(!p.locked); // interactive by default
+        assert!((p.scale - 1.0).abs() < 1e-6);
+        assert_eq!(p.x, -1);
+        assert_eq!(p.y, -1); // -1 sentinel = never placed
+        assert!(!p.speech_lines.is_empty());
+    }
+
+    #[test]
+    fn legacy_settings_without_pet_section_still_loads() {
+        // A settings.json written before this feature lacks the `pet` section.
+        // It MUST still deserialize (pet falls back to default) instead of
+        // wiping the user's saved appearance/system.
+        let legacy = serde_json::json!({
+            "appearance": {
+                "bg_r": 10, "bg_g": 20, "bg_b": 30, "bg_a": 0.5,
+                "blur": 1.0, "radius": 2.0, "font_scale": 1.0
+            },
+            "system": { "autostart": false }
+        });
+        let parsed: AppSettings = serde_json::from_value(legacy).unwrap();
+        assert_eq!(parsed.appearance.bg_r, 10); // preserved
+        assert!(!parsed.system.autostart); // preserved
+        assert!(!parsed.pet.enabled); // pet defaulted
+        assert!(parsed.pet.always_on_top);
     }
 }
