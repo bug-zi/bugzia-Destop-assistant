@@ -10,7 +10,9 @@ import "./WaveformWindow.css";
  * `waveform://level` (~30 fps, raw 0..1). This window draws sakura petals whose
  * SPAWN DENSITY tracks that level: loud -> a flurry of petals falling + swaying
  * + spinning; silence -> no new petals, existing ones finish their fall and
- * drift off the bottom edge.
+ * drift off the bottom edge. A STATIC pale-white translucent band at the bottom
+ * edge marks the water surface — it does NOT move with loudness, only the petals
+ * do.
  *
  * Two performance rules:
  *  1. The audio level arrives at ~30 fps and is written to a REF (never React
@@ -175,6 +177,19 @@ export default function WaveformWindow() {
       ctx.restore();
     };
 
+    // Static water-surface highlight at the bottom edge: a pale-white translucent
+    // band that anchors the falling petals. Fixed color (does NOT follow the
+    // accent/highlight setting) and does NOT move with loudness — a calm, still
+    // baseline, while only the petals dance.
+    const drawWaterLine = (w: number, h: number) => {
+      const bandH = 6;
+      const grad = ctx.createLinearGradient(0, h - bandH, 0, h);
+      grad.addColorStop(0, "rgba(255, 255, 255, 0)");
+      grad.addColorStop(1, "rgba(255, 255, 255, 0.42)");
+      ctx.fillStyle = grad;
+      ctx.fillRect(0, h - bandH, w, bandH);
+    };
+
     const tick = (ts: number) => {
       rafRef.current = requestAnimationFrame(tick);
       const s = settingsRef.current;
@@ -201,9 +216,8 @@ export default function WaveformWindow() {
 
       const petals = petalsRef.current;
 
-      // ── advance ── (pure falling petals: gravity + sway + spin, no water line
-      //    and no settle. A petal is culled once it falls past the bottom edge or
-      //    is blown off the sides.)
+      // ── advance ── (pure falling petals: gravity + sway + spin. A petal is
+      //    culled once it falls past the bottom edge or is blown off the sides.)
       for (let i = petals.length - 1; i >= 0; i--) {
         const p = petals[i];
         p.life += dt;
@@ -219,8 +233,9 @@ export default function WaveformWindow() {
         }
       }
 
-      // ── paint ── (falling petals only — no water line)
+      // ── paint ── (static water line first, then falling petals on top)
       ctx.clearRect(0, 0, w, h);
+      drawWaterLine(w, h);
       for (const p of petals) drawPetal(p);
     };
 
