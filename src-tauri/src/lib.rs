@@ -7,8 +7,8 @@ mod weather;
 
 use ai::{ask_once, ask_once_stream, chat, clear_context, get_messages, set_messages, stop_chat, test_ai_connection};
 use conversations::{
-    delete_conversation, get_conversation, list_conversations, set_conversation_locked,
-    upsert_conversation,
+    delete_conversation, get_conversation, list_conversations, rename_conversation,
+    set_conversation_locked, upsert_conversation,
 };
 use file_search::{open_file, reveal_file, search_files};
 use settings::{clear_api_key, load_api_key, load_settings, save_api_key, save_settings};
@@ -226,6 +226,7 @@ pub fn run() {
             upsert_conversation,
             set_conversation_locked,
             delete_conversation,
+            rename_conversation,
             search_files,
             open_file,
             reveal_file,

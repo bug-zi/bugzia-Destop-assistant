@@ -45,6 +45,12 @@ pub struct Conversation {
     pub updated_at: i64,
     #[serde(default)]
     pub locked: bool,
+    /// User-set name override. When present it shadows `title` everywhere the
+    /// conversation is listed, and is preserved across `upsert_conversation`
+    /// (which otherwise re-derives `title` from the first user message every
+    /// turn). `#[serde(default)]` so an older conversations.json still loads.
+    #[serde(default)]
+    pub custom_title: Option<String>,
     pub messages: Vec<ConvMessage>,
 }
 
@@ -113,12 +119,23 @@ fn save_all(app: &AppHandle, convs: &[Conversation]) -> Result<(), String> {
 fn summarize(c: &Conversation) -> ConvSummary {
     ConvSummary {
         id: c.id.clone(),
-        title: c.title.clone(),
+        // Effective name: a user-set override shadows the auto-derived title.
+        title: effective_title(c),
         created_at: c.created_at,
         updated_at: c.updated_at,
         locked: c.locked,
         message_count: c.messages.len(),
     }
+}
+
+/// The name shown to the user: the custom override if set, else the
+/// auto-derived `title`. Centralized so the rail, rename, and resume paths
+/// never disagree about what a conversation is called.
+fn effective_title(c: &Conversation) -> String {
+    c.custom_title
+        .clone()
+        .filter(|t| !t.trim().is_empty())
+        .unwrap_or_else(|| c.title.clone())
 }
 
 /// Derive a title from the first user message (truncated), else "新对话".
@@ -230,6 +247,8 @@ pub fn upsert_conversation(
             created_at: now,
             updated_at: now,
             locked: false,
+            // No user rename yet — the auto-derived title is in effect.
+            custom_title: None,
             messages,
         });
     }
@@ -262,6 +281,32 @@ pub fn delete_conversation(app: AppHandle, id: String) -> Result<(), String> {
     let before = convs.len();
     convs.retain(|c| c.id != id);
     if convs.len() != before {
+        save_all(&app, &convs)?;
+    }
+    Ok(())
+}
+
+/// Rename one conversation. Sets the user-visible override (`custom_title`),
+/// which shadows the auto-derived `title` and is never clobbered by later
+/// upserts (those keep refreshing `title` from the first user message). An
+/// empty/whitespace name clears the override, falling back to the auto title.
+#[tauri::command]
+pub fn rename_conversation(app: AppHandle, id: String, title: String) -> Result<(), String> {
+    let trimmed = title.trim();
+    let mut convs = load_all(&app)?;
+    let mut changed = false;
+    for c in convs.iter_mut() {
+        if c.id == id {
+            c.custom_title = if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed.to_string())
+            };
+            changed = true;
+            break;
+        }
+    }
+    if changed {
         save_all(&app, &convs)?;
     }
     Ok(())

@@ -62,6 +62,14 @@ export function deleteConversation(id: string): Promise<void> {
   return invoke("delete_conversation", { id });
 }
 
+/** Rename one conversation. Sets a user-visible name override that survives
+ *  later upserts — which would otherwise re-derive the title from the first
+ *  user message on every turn and clobber a manual rename. An empty string
+ *  clears the override, falling back to the auto-derived title. */
+export function renameConversation(id: string, title: string): Promise<void> {
+  return invoke("rename_conversation", { id, title });
+}
+
 /** Build a title from the first user message, truncated — matches backend logic
  *  so the rail can show a title before the first save round-trip. */
 export function deriveTitle(messages: ChatMessage[]): string {
