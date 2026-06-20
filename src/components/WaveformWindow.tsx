@@ -9,8 +9,8 @@ import "./WaveformWindow.css";
  * audio via WASAPI loopback, reduces it to a single loudness level, and emits
  * `waveform://level` (~30 fps, raw 0..1). This window draws sakura petals whose
  * SPAWN DENSITY tracks that level: loud -> a flurry of petals falling + swaying
- * + spinning + fading; silence -> no new petals, existing ones settle onto a
- * calm water line at the bottom and fade out.
+ * + spinning; silence -> no new petals, existing ones finish their fall and
+ * drift off the bottom edge.
  *
  * Two performance rules:
  *  1. The audio level arrives at ~30 fps and is written to a REF (never React
@@ -36,10 +36,6 @@ interface Petal {
   baseAlpha: number;
   /** Seconds alive (drives the fade-in). */
   life: number;
-  /** Landed on the water line: no more falling, just a gentle drift + slow fade. */
-  settled: boolean;
-  /** 1 -> 0 multiplier while settled (alpha ramps down over ~2s). */
-  settleAlpha: number;
 }
 
 const rgb = (r: number, g: number, b: number) => `rgb(${r}, ${g}, ${b})`;
@@ -133,9 +129,8 @@ export default function WaveformWindow() {
   }, []);
 
   // The render loop (created once). Spawns petals at a density driven by the
-  // audio level, advances their fall / sway / spin / fade, and paints a water
-  // line whose brightness rises with loudness. Silence stops spawning and lets
-  // in-flight petals settle onto the water and fade out.
+  // audio level, advances their fall / sway / spin, and paints them. Silence
+  // stops spawning; in-flight petals finish their fall and drift off-screen.
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -161,8 +156,6 @@ export default function WaveformWindow() {
         color: pickColor(s),
         baseAlpha: 0.7 + Math.random() * 0.3,
         life: 0,
-        settled: false,
-        settleAlpha: 1,
       };
     };
 
@@ -171,7 +164,7 @@ export default function WaveformWindow() {
       ctx.save();
       ctx.translate(p.x, p.y);
       ctx.rotate(p.rot);
-      ctx.globalAlpha = p.baseAlpha * (p.settled ? p.settleAlpha : 1) * Math.min(1, p.life * 4);
+      ctx.globalAlpha = p.baseAlpha * Math.min(1, p.life * 4);
       ctx.fillStyle = p.color;
       ctx.beginPath();
       // Petal silhouette: pointed top, rounded bottom (a smooth petal/leaf).
@@ -206,54 +199,28 @@ export default function WaveformWindow() {
       }
       if (spawnAccumRef.current > 1) spawnAccumRef.current = 1; // bleed overflow
 
-      // Water-line band rises a little with loudness; petals "land" at its top.
-      const waterTop = h - (4 + lvl * 20);
       const petals = petalsRef.current;
 
-      // ── advance ──
+      // ── advance ── (pure falling petals: gravity + sway + spin, no water line
+      //    and no settle. A petal is culled once it falls past the bottom edge or
+      //    is blown off the sides.)
       for (let i = petals.length - 1; i >= 0; i--) {
         const p = petals[i];
         p.life += dt;
-        if (!p.settled) {
-          p.vy = Math.min(MAX_VY, p.vy + GRAVITY * dt);
-          p.y += p.vy * s.drift_speed * dt;
-          p.x += p.vx * s.drift_speed * dt;
-          p.swayPhase += p.swaySpeed * dt;
-          p.x += Math.sin(p.swayPhase) * p.swayAmp * dt;
-          p.rot += p.vrot * dt;
-          // Reached the water: settle — stop falling, drift gently, fade slowly.
-          if (p.y >= waterTop) {
-            p.settled = true;
-            p.y = waterTop + Math.random() * 4;
-            p.vy = 0;
-            p.vrot *= 0.2;
-          }
-        } else {
-          p.swayPhase += p.swaySpeed * 0.4 * dt;
-          p.x += Math.sin(p.swayPhase) * p.swayAmp * 0.3 * dt;
-          p.rot += p.vrot * dt;
-          p.settleAlpha -= dt * 0.5; // ~2s fade once settled
-          if (p.settleAlpha <= 0) {
-            petals.splice(i, 1);
-            continue;
-          }
-        }
-        // Blown off the sides: cull.
-        if (p.x < -p.size * 2 || p.x > w + p.size * 2) {
+        p.vy = Math.min(MAX_VY, p.vy + GRAVITY * dt);
+        p.y += p.vy * s.drift_speed * dt;
+        p.x += p.vx * s.drift_speed * dt;
+        p.swayPhase += p.swaySpeed * dt;
+        p.x += Math.sin(p.swayPhase) * p.swayAmp * dt;
+        p.rot += p.vrot * dt;
+        // Fell past the bottom edge or blown off the sides: cull.
+        if (p.y > h + p.size || p.x < -p.size * 2 || p.x > w + p.size * 2) {
           petals.splice(i, 1);
         }
       }
 
-      // ── paint ──
+      // ── paint ── (falling petals only — no water line)
       ctx.clearRect(0, 0, w, h);
-      // water line: soft band whose brightness tracks loudness.
-      const bandH = h - waterTop;
-      ctx.fillStyle = `rgba(${s.accent_r}, ${s.accent_g}, ${s.accent_b}, ${0.08 + lvl * 0.22})`;
-      ctx.fillRect(0, waterTop, w, bandH);
-      // a crisp highlight right on the water's surface.
-      ctx.fillStyle = `rgba(${s.accent_r}, ${s.accent_g}, ${s.accent_b}, ${0.25 + lvl * 0.4})`;
-      ctx.fillRect(0, waterTop, w, Math.min(2, bandH));
-      // petals on top of the water.
       for (const p of petals) drawPetal(p);
     };
 
