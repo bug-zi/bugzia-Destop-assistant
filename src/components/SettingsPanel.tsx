@@ -11,7 +11,7 @@ import type {
 } from "../features/settings/settingsTypes";
 import { loadApiKey, saveApiKey, clearApiKey, testAiConnection } from "../features/settings/settingsStore";
 import { SEARCH_ENGINES } from "../features/search/command";
-import { open } from "@tauri-apps/plugin-dialog";
+import { open, message } from "@tauri-apps/plugin-dialog";
 import { openPath } from "@tauri-apps/plugin-opener";
 import { invoke } from "@tauri-apps/api/core";
 import "./SettingsPanel.css";
@@ -131,6 +131,9 @@ export default function SettingsPanel({ settings, onChange, onClose }: SettingsP
       await openPath(dir);
     } catch (e) {
       console.error("[bugzia] open pet folder", e);
+      // Surface the real error (e.g. ACL ForbiddenPath) so a failure isn't
+      // silently swallowed — the button otherwise looks dead.
+      void message(`无法打开素材文件夹：\n${String(e)}`, { title: "桌宠", kind: "error" });
     }
   }
 
