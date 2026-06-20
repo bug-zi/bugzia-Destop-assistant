@@ -130,6 +130,39 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* Color field with preset swatches (锁定卡片颜色). The picker keeps the shared
+   .color-row grid; swatches sit beneath it, indented to align under the control
+   column (64px label + 8px gap). Only rendered when ColorField is given presets. */
+.color-field {
+  margin: 6px 0;
+}
+
+.color-presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 6px 0 0 72px;
+}
+
+.color-swatch {
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid rgba(31, 36, 40, 0.2);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: transform 0.1s ease, box-shadow 0.1s ease;
+}
+
+.color-swatch:hover {
+  transform: scale(1.12);
+}
+
+.color-swatch.active {
+  border-color: rgba(255, 255, 255, 0.9);
+  box-shadow: 0 0 0 2px rgba(31, 36, 40, 0.85);
+}
+
 /* text fields */
 .field {
   display: flex;

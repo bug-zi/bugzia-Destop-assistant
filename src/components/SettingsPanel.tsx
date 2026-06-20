@@ -124,7 +124,7 @@ export default function SettingsPanel({ settings, onChange, onClose }: SettingsP
 
   /** Open the pet sprite dir in the file manager (created on demand by the
    *  backend `pet_assets_dir` command, so it always exists). The user drops
-   *  idle.png / blink.png / happy.png here to swap art — no rebuild needed. */
+   *  pose PNGs here to swap art — no rebuild needed. */
   async function handleOpenPetFolder() {
     try {
       const dir = await invoke<string>("pet_assets_dir");
@@ -214,6 +214,11 @@ export default function SettingsPanel({ settings, onChange, onClose }: SettingsP
               fmt={(v) => v.toFixed(2)} onChange={(v) => patchResult({ hover_alpha: v })} />
             <ColorRow label="滚动条宽度" value={r.scrollbar_w} min={4} max={14} step={1}
               fmt={(v) => `${v}px`} onChange={(v) => patchResult({ scrollbar_w: v })} />
+            <ColorField label="锁定卡片颜色"
+              r={r.locked_r} g={r.locked_g} b={r.locked_b}
+              presets={LOCKED_COLOR_PRESETS}
+              onChange={(hex) => { const c = hexToRgb(hex); patchResult({ locked_r: c.r, locked_g: c.g, locked_b: c.b }); }} />
+            <div className="hint">作用于历史对话里已锁定的卡片（半透明叠加，替换默认琥珀色）。点预设色块或用取色盘自选。</div>
           </section>
 
           {/* ── 桌面波形 ── */}
@@ -427,7 +432,7 @@ export default function SettingsPanel({ settings, onChange, onClose }: SettingsP
                 </button>
               </div>
               <div className="hint">
-                把 idle.png / blink.png / happy.png 放进该文件夹即换肤，无需重启。缺失时显示占位图。
+                把 idle.png / blink.png / happy.png 放进该文件夹即可换肤；可选补充 drag.png / surprise.png / sleep.png，缺失时复用基础姿态。
               </div>
             </Field>
           </section>
@@ -472,26 +477,77 @@ function hexToRgb(hex: string): { r: number; g: number; b: number } {
   return { r: (n >> 16) & 255, g: (n >> 8) & 255, b: n & 255 };
 }
 
-/** Label + native color picker row (主色 / 高光). Reuses the slider-row grid. */
+/** Preset swatches for the locked-card tint (history rail). One click applies;
+ *  the native picker next to them selects any other color. Distinct hues so
+ *  locked conversations read at a glance once tinted. */
+const LOCKED_COLOR_PRESETS = [
+  "#FFDE78", // 琥珀（默认）
+  "#FF8787", // 珊瑚红
+  "#FFA94D", // 橙
+  "#69DB7C", // 绿
+  "#38D9A9", // 青
+  "#4DABF7", // 蓝
+  "#9775FA", // 紫
+  "#F783AC", // 粉
+];
+
+/** Label + native color picker row (背景色 / 主色 / 高光 / 锁定卡片颜色). Reuses
+ *  the slider-row grid. When `presets` is provided, a row of swatch buttons is
+ *  shown beneath the picker (one click applies); call sites that omit it render
+ *  the exact same single .color-row as before, so existing color fields are
+ *  unaffected. */
 function ColorField(props: {
   label: string;
   r: number;
   g: number;
   b: number;
+  /** Optional preset swatch hex strings rendered beneath the picker. */
+  presets?: string[];
   onChange: (hex: string) => void;
 }) {
-  const { label, r, g, b, onChange } = props;
+  const { label, r, g, b, presets, onChange } = props;
   const hex = "#" + [r, g, b].map((v) => v.toString(16).padStart(2, "0")).join("");
+  const upper = hex.toUpperCase();
+  // No presets -> original single-row layout (unchanged for bg / waveform fields).
+  if (!presets || presets.length === 0) {
+    return (
+      <div className="color-row">
+        <span className="color-label">{label}</span>
+        <input
+          className="color-picker"
+          type="color"
+          value={hex}
+          onChange={(e) => onChange(e.target.value)}
+        />
+        <span className="color-value">{upper}</span>
+      </div>
+    );
+  }
   return (
-    <div className="color-row">
-      <span className="color-label">{label}</span>
-      <input
-        className="color-picker"
-        type="color"
-        value={hex}
-        onChange={(e) => onChange(e.target.value)}
-      />
-      <span className="color-value">{hex.toUpperCase()}</span>
+    <div className="color-field">
+      <div className="color-row">
+        <span className="color-label">{label}</span>
+        <input
+          className="color-picker"
+          type="color"
+          value={hex}
+          onChange={(e) => onChange(e.target.value)}
+        />
+        <span className="color-value">{upper}</span>
+      </div>
+      <div className="color-presets">
+        {presets.map((p) => (
+          <button
+            key={p}
+            type="button"
+            className={"color-swatch" + (p.toUpperCase() === upper ? " active" : "")}
+            style={{ background: p }}
+            title={p.toUpperCase()}
+            aria-label={p.toUpperCase()}
+            onClick={() => onChange(p)}
+          />
+        ))}
+      </div>
     </div>
   );
 }

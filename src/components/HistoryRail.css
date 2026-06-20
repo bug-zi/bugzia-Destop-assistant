@@ -1,0 +1,116 @@
+/* History rail — left column of the result overlay. Sits beside the chat/file
+ * body in a flex row (.result-body becomes a row when this is present). Uses
+ * the result-panel CSS variables so it tracks the user's glass theme. */
+
+.history-rail {
+  width: 180px;
+  flex: 0 0 180px;
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid rgba(0, 0, 0, 0.08);
+  background: rgba(255, 255, 255, 0.18);
+  overflow: hidden;
+}
+
+.history-rail-head {
+  padding: 8px 10px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  opacity: 0.6;
+  text-transform: uppercase;
+  flex: 0 0 auto;
+}
+
+.history-rail-list {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  padding: 0 6px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.history-rail-empty {
+  padding: 12px 8px;
+  font-size: 12px;
+  opacity: 0.5;
+  text-align: center;
+}
+
+.history-item {
+  display: flex;
+  align-items: stretch;
+  border-radius: var(--result-item-radius, 9px);
+  background: rgba(255, 255, 255, 0.12);
+  overflow: hidden;
+}
+
+.history-item.is-locked {
+  background: rgba(
+    var(--bugzia-result-locked-r, 255),
+    var(--bugzia-result-locked-g, 222),
+    var(--bugzia-result-locked-b, 120),
+    0.22
+  );
+}
+
+.history-item-main {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 8px;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  text-align: left;
+  color: inherit;
+}
+
+.history-item-main:hover {
+  background: rgba(255, 255, 255, 0.14);
+}
+
+.history-item-title {
+  font-size: 12.5px;
+  line-height: 1.3;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.history-item-meta {
+  font-size: 10.5px;
+  opacity: 0.5;
+}
+
+.history-item-btn {
+  flex: 0 0 auto;
+  align-self: center;
+  margin: 2px;
+  padding: 2px 5px;
+  font-size: 11px;
+  line-height: 1.4;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  cursor: pointer;
+  color: inherit;
+  opacity: 0.55;
+}
+
+.history-item-btn:hover {
+  background: rgba(0, 0, 0, 0.08);
+  opacity: 1;
+}
+
+.history-item-btn.active {
+  opacity: 1;
+  font-weight: 600;
+}
+
+.history-item-btn.danger:hover {
+  color: #c0392b;
+}

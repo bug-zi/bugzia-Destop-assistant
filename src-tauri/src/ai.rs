@@ -343,6 +343,18 @@ pub fn get_messages(state: State<'_, ChatState>) -> Vec<ChatMessage> {
     state.messages.lock().unwrap().clone()
 }
 
+/// Replace the in-memory conversation context wholesale. Used when the user
+/// resumes a saved conversation from history: the frontend loads the stored
+/// messages and pushes them back here so the NEXT `chat` turn carries the
+/// resumed context. `ChatMessage` has no `model` field, so the echoed-model
+/// badge (a frontend-only concern) is dropped here — only role/content matter
+/// for the request payload. Mirrors `clear_context` (the only other writer of
+/// `.messages`) but sets instead of clears.
+#[tauri::command]
+pub fn set_messages(state: State<'_, ChatState>, messages: Vec<ChatMessage>) {
+    *state.messages.lock().unwrap() = messages;
+}
+
 // ---------------------------------------------------------------------------
 // ask_once (one-shot Q&A; used by `/trans`)
 // ---------------------------------------------------------------------------

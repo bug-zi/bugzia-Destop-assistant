@@ -1,10 +1,15 @@
 mod ai;
+mod conversations;
 mod file_search;
 mod settings;
 mod waveform;
 mod weather;
 
-use ai::{ask_once, ask_once_stream, chat, clear_context, get_messages, stop_chat, test_ai_connection};
+use ai::{ask_once, ask_once_stream, chat, clear_context, get_messages, set_messages, stop_chat, test_ai_connection};
+use conversations::{
+    delete_conversation, get_conversation, list_conversations, set_conversation_locked,
+    upsert_conversation,
+};
 use file_search::{open_file, reveal_file, search_files};
 use settings::{clear_api_key, load_api_key, load_settings, save_api_key, save_settings};
 
@@ -212,9 +217,15 @@ pub fn run() {
             stop_chat,
             clear_context,
             get_messages,
+            set_messages,
             test_ai_connection,
             ask_once,
             ask_once_stream,
+            list_conversations,
+            get_conversation,
+            upsert_conversation,
+            set_conversation_locked,
+            delete_conversation,
             search_files,
             open_file,
             reveal_file,

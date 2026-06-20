@@ -7,12 +7,28 @@ import { loadSettings } from "../features/settings/settingsStore";
 import { DEFAULT_PET, type PetSettings } from "../features/settings/settingsTypes";
 import "./PetWindow.css";
 
-type Pose = "idle" | "blink" | "happy";
-const POSES: Pose[] = ["idle", "blink", "happy"];
+type Pose = "idle" | "blink" | "happy" | "drag" | "surprise" | "sleep";
+const POSES: Pose[] = ["idle", "blink", "happy", "drag", "surprise", "sleep"];
+const POSE_ASSET_FALLBACKS: Record<Pose, Pose[]> = {
+  idle: ["idle"],
+  blink: ["blink", "idle"],
+  happy: ["happy", "idle"],
+  drag: ["drag", "happy", "idle"],
+  surprise: ["surprise", "happy", "idle"],
+  sleep: ["sleep", "blink", "idle"],
+};
+const DOUBLE_CLICK_MS = 320;
+const AUTO_SLEEP_MS = 45_000;
+const SLEEP_CHECK_MS = 5_000;
 
 type PetEvent =
   | { type: "pet" }
   | { type: "blink" }
+  | { type: "drag-start" }
+  | { type: "drag-end" }
+  | { type: "surprise" }
+  | { type: "sleep" }
+  | { type: "wake" }
   | { type: "to-idle" };
 
 /** Pose state machine. `happy`/`blink` are transient — an effect reverts them to
@@ -22,7 +38,17 @@ function petReducer(state: Pose, event: PetEvent): Pose {
     case "pet":
       return "happy";
     case "blink":
-      return "blink";
+      return state === "idle" ? "blink" : state;
+    case "drag-start":
+      return "drag";
+    case "drag-end":
+      return "idle";
+    case "surprise":
+      return "surprise";
+    case "sleep":
+      return state === "idle" ? "sleep" : state;
+    case "wake":
+      return state === "sleep" ? "idle" : state;
     case "to-idle":
       return "idle";
     default:
@@ -44,48 +70,29 @@ export function isDrag(
 
 const DRAG_THRESHOLD = 5;
 
-/** Inline SVG shown when a pose PNG is missing or fails to load, so the feature
- *  is fully testable before real art exists. A pink chibi-ish labeled card.
- *  Eyes + mouth DIFFER per pose: otherwise idle/blink/happy look identical and
- *  the user can't tell she blinked or is happy. idle=open dots, blink=closed
- *  lines, happy=upward arcs + a wider smile. */
-function placeholderDataUri(pose: Pose): string {
-  const eyes =
-    pose === "blink"
-      ? // closed eyes: short horizontal lines
-        `<line x1='55' y1='74' x2='67' y2='74' stroke='#5a3b46' stroke-width='3' stroke-linecap='round'/>` +
-        `<line x1='83' y1='74' x2='95' y2='74' stroke='#5a3b46' stroke-width='3' stroke-linecap='round'/>`
-      : pose === "happy"
-        ? // smiling eyes: upward arcs (^ ^)
-          `<path d='M54 77 Q61 68 68 77' stroke='#5a3b46' stroke-width='3' fill='none' stroke-linecap='round'/>` +
-          `<path d='M82 77 Q89 68 96 77' stroke='#5a3b46' stroke-width='3' fill='none' stroke-linecap='round'/>`
-        : // idle: open round eyes
-          `<circle cx='61' cy='74' r='6' fill='#5a3b46'/>` +
-          `<circle cx='89' cy='74' r='6' fill='#5a3b46'/>`;
-  const mouth =
-    pose === "happy"
-      ? `<path d='M56 90 Q75 110 94 90' stroke='#5a3b46' stroke-width='3' fill='none' stroke-linecap='round'/>`
-      : `<path d='M62 92 Q75 101 88 92' stroke='#5a3b46' stroke-width='3' fill='none' stroke-linecap='round'/>`;
-  const svg =
-    `<svg xmlns='http://www.w3.org/2000/svg' width='150' height='200'>` +
-    `<rect width='150' height='200' rx='18' fill='#FFB7C5' opacity='0.9'/>` +
-    `<circle cx='75' cy='78' r='44' fill='#ffffff'/>` +
-    eyes +
-    mouth +
-    `<text x='75' y='150' font-size='13' text-anchor='middle' fill='#ffffff'>${pose}</text>` +
-    `<text x='75' y='172' font-size='11' text-anchor='middle' fill='#ffffff' opacity='0.85'>占位</text>` +
-    `</svg>`;
-  return "data:image/svg+xml;utf8," + encodeURIComponent(svg);
-}
-
 function randomLine(lines: string[]): string {
   return lines[Math.floor(Math.random() * lines.length)];
+}
+
+function pickPoseAsset(
+  poseSrcs: Record<Pose, string> | null,
+  failed: Partial<Record<Pose, boolean>>,
+  pose: Pose,
+): { src: string | null; assetPose: Pose } {
+  for (const assetPose of POSE_ASSET_FALLBACKS[pose]) {
+    const src = poseSrcs?.[assetPose];
+    if (src && !failed[assetPose]) return { src, assetPose };
+  }
+  return { src: null, assetPose: pose };
 }
 
 export default function PetWindow() {
   const [pose, dispatch] = useReducer(petReducer, "idle");
   const [settings, setSettings] = useState<PetSettings>(DEFAULT_PET);
   const settingsRef = useRef<PetSettings>(DEFAULT_PET);
+  const poseRef = useRef<Pose>("idle");
+  const lastInteractionRef = useRef(Date.now());
+  const lastClickAtRef = useRef(0);
   const [bubble, setBubble] = useState<string | null>(null);
   const [poseSrcs, setPoseSrcs] = useState<Record<Pose, string> | null>(null);
   const [failed, setFailed] = useState<Partial<Record<Pose, boolean>>>({});
@@ -94,6 +101,10 @@ export default function PetWindow() {
   useEffect(() => {
     settingsRef.current = settings;
   }, [settings]);
+
+  useEffect(() => {
+    poseRef.current = pose;
+  }, [pose]);
 
   // Load settings on mount + resolve pose image URLs from ${appDataDir}/pet (the
   // dir is created by the `pet_assets_dir` backend command).
@@ -141,8 +152,8 @@ export default function PetWindow() {
 
   // Revert a transient pose (happy / blink) back to idle.
   useEffect(() => {
-    if (pose === "idle") return;
-    const ms = pose === "blink" ? 200 : 800;
+    if (pose === "idle" || pose === "drag" || pose === "sleep") return;
+    const ms = pose === "blink" ? 200 : pose === "surprise" ? 650 : 800;
     const t = window.setTimeout(() => dispatch({ type: "to-idle" }), ms);
     return () => window.clearTimeout(t);
   }, [pose]);
@@ -156,7 +167,7 @@ export default function PetWindow() {
     const schedule = () => {
       timer = window.setTimeout(() => {
         if (stopped) return;
-        dispatch({ type: "blink" });
+        if (poseRef.current === "idle") dispatch({ type: "blink" });
         schedule();
       }, iv);
     };
@@ -180,7 +191,9 @@ export default function PetWindow() {
     const schedule = (delay: number) => {
       timer = window.setTimeout(() => {
         if (stopped) return;
-        setBubble(randomLine(lines));
+        if (poseRef.current !== "sleep" && poseRef.current !== "drag") {
+          setBubble(randomLine(lines));
+        }
         schedule(iv);
       }, delay);
     };
@@ -198,18 +211,41 @@ export default function PetWindow() {
     return () => window.clearTimeout(t);
   }, [bubble]);
 
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      if (settingsRef.current.locked) return;
+      if (poseRef.current === "idle" && Date.now() - lastInteractionRef.current > AUTO_SLEEP_MS) {
+        dispatch({ type: "sleep" });
+      }
+    }, SLEEP_CHECK_MS);
+    return () => window.clearInterval(timer);
+  }, []);
+
   // Click vs drag disambiguation (no data-tauri-drag-region — it eats clicks).
   const dragState = useRef<{ x: number; y: number; moved: boolean } | null>(null);
 
+  function noteInteraction() {
+    lastInteractionRef.current = Date.now();
+    if (poseRef.current === "sleep") dispatch({ type: "wake" });
+  }
+
   function onPointerDown(e: React.PointerEvent) {
     if (settingsRef.current.locked) return; // click-through handled by backend
+    noteInteraction();
+    try {
+      e.currentTarget.setPointerCapture(e.pointerId);
+    } catch {
+      // Pointer capture is best-effort; native dragging still works without it.
+    }
     dragState.current = { x: e.clientX, y: e.clientY, moved: false };
   }
 
   function onPointerMove(e: React.PointerEvent) {
+    if (settingsRef.current.locked) return;
     const el = rootRef.current;
     // Hover look (no button held): write normalized cursor pos as CSS vars.
     if (el && e.buttons === 0) {
+      noteInteraction();
       const r = el.getBoundingClientRect();
       const nx = ((e.clientX - r.left) / r.width) * 2 - 1;
       const ny = ((e.clientY - r.top) / r.height) * 2 - 1;
@@ -221,19 +257,35 @@ export default function PetWindow() {
     if (!ds) return;
     if (!ds.moved && isDrag(ds.x, ds.y, e.clientX, e.clientY, DRAG_THRESHOLD)) {
       ds.moved = true;
+      dispatch({ type: "drag-start" });
       getCurrentWindow()
         .startDragging()
         .catch((err) => console.error("[bugzia] startDragging", err));
     }
   }
 
-  function onPointerUp() {
+  function onPointerUp(e: React.PointerEvent) {
+    if (settingsRef.current.locked) return;
+    noteInteraction();
+    try {
+      e.currentTarget.releasePointerCapture(e.pointerId);
+    } catch {
+      // Matching the best-effort capture above.
+    }
     const ds = dragState.current;
     dragState.current = null;
     if (!ds) return;
+    if (ds.moved) {
+      dispatch({ type: "drag-end" });
+      return;
+    }
     if (!ds.moved) {
-      // A click (no drag) -> pet reaction + speech.
-      dispatch({ type: "pet" });
+      const now = Date.now();
+      const isDoubleClick = now - lastClickAtRef.current <= DOUBLE_CLICK_MS;
+      lastClickAtRef.current = isDoubleClick ? 0 : now;
+      // A click (no drag) -> pet reaction + speech. A quick second click gets a
+      // stronger surprise reaction without adding another visible control.
+      dispatch({ type: isDoubleClick ? "surprise" : "pet" });
       const cur = settingsRef.current;
       if (cur.speech_enabled && cur.speech_lines?.length) {
         setBubble(randomLine(cur.speech_lines));
@@ -241,32 +293,40 @@ export default function PetWindow() {
     }
   }
 
-  const src = poseSrcs?.[pose];
-  const showFallback = !src || !!failed[pose];
+  function onPointerCancel() {
+    if (dragState.current?.moved) dispatch({ type: "drag-end" });
+    dragState.current = null;
+  }
+
+  const asset = pickPoseAsset(poseSrcs, failed, pose);
   const style = { "--scale": settings.scale } as CSSProperties;
 
   return (
     <div
       ref={rootRef}
-      className="pet-root"
+      className={`pet-root pet-pose-${pose}`}
       style={style}
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
+      onPointerCancel={onPointerCancel}
     >
-      {bubble != null && <div className="pet-bubble">{bubble}</div>}
-      <div className="pet-look">
-        {showFallback ? (
-          <img className="pet-sprite" src={placeholderDataUri(pose)} alt="" draggable={false} />
-        ) : (
-          <img
-            className="pet-sprite"
-            src={src}
-            alt=""
-            draggable={false}
-            onError={() => setFailed((f) => ({ ...f, [pose]: true }))}
-          />
-        )}
+      <div className="pet-bubble-layer">
+        {bubble != null && <div className="pet-bubble">{bubble}</div>}
+        {pose === "sleep" && bubble == null && <div className="pet-snooze">Zzz</div>}
+      </div>
+      <div className="pet-body-layer">
+        <div className="pet-look">
+          {asset.src != null && (
+            <img
+              className="pet-sprite"
+              src={asset.src}
+              alt=""
+              draggable={false}
+              onError={() => setFailed((f) => ({ ...f, [asset.assetPose]: true }))}
+            />
+          )}
+        </div>
       </div>
     </div>
   );

@@ -118,3 +118,17 @@
   -webkit-user-select: text;
   user-select: text;
 }
+
+/* History rail open: lay the body out as a row (rail | chat). The rail is a
+   fixed 180px column; the chat fills the rest. Padding moves to the chat so the
+   rail's background + right border run edge-to-edge. */
+.result-body.with-rail {
+  flex-direction: row;
+  padding: 8px 0 12px;
+}
+
+.result-body.with-rail > .chat {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 0 12px;
+}

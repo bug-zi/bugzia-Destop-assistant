@@ -54,6 +54,10 @@ export interface ResultAppearanceSettings {
   hover_alpha: number;
   /** scrollbar width in px */
   scrollbar_w: number;
+  /** Locked conversation-card tint R/G/B (history rail `.is-locked`). */
+  locked_r: number;
+  locked_g: number;
+  locked_b: number;
 }
 
 export interface WindowSettings {
@@ -140,7 +144,7 @@ export interface WaveformSettings {
 }
 
 /**
- * Desktop pet (Anya companion) settings. Frontend mirror of Rust `PetSettings`
+ * Desktop pet companion settings. Frontend mirror of Rust `PetSettings`
  * (src-tauri/src/settings.rs); field names MUST match the serde JSON keys exactly.
  *
  * Self-contained overlay: idles (blink), looks toward the cursor, reacts to a
@@ -198,6 +202,9 @@ export const DEFAULT_RESULT: ResultAppearanceSettings = {
   row_pad: 6,
   hover_alpha: 0.72,
   scrollbar_w: 8,
+  locked_r: 255,
+  locked_g: 222,
+  locked_b: 120,
 };
 
 export const DEFAULT_WINDOW: WindowSettings = {
@@ -263,11 +270,11 @@ export const DEFAULT_PET: PetSettings = {
   blink_interval_ms: 4000,
   speech_enabled: true,
   speech_interval_ms: 20000,
-  speech_lines: ["哇酷哇酷", "好厉害!", "嘿嘿", "喜欢!", "诶嘿~"],
+  speech_lines: ["哼，终于想起我了？", "今天也要优雅一点。", "别乱点，我在看着你。", "做得不错。", "再陪我一会儿。"],
   x: -1,
   y: -1,
-  w: 150,
-  h: 200,
+  w: 210,
+  h: 300,
 };
 
 export const DEFAULT_SETTINGS: AppSettings = {

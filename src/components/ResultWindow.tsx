@@ -4,6 +4,7 @@ import { emit, listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import ChatView from "./ChatView";
 import FileResultsView from "./FileResultsView";
+import HistoryRail from "./HistoryRail";
 import "./ResultWindow.css";
 import { getMessages, type ChatMessage } from "../features/ai/chat";
 import {
@@ -106,6 +107,8 @@ export default function ResultWindow() {
   const [fileResults, setFileResults] = useState<FileResult[]>([]);
   const [fileQuery, setFileQuery] = useState("");
   const [searching, setSearching] = useState(false);
+  // Whether the history rail is shown beside the chat body.
+  const [historyOpen, setHistoryOpen] = useState(false);
   // Gate live deltas until the first `result:replay` lands, so tokens that
   // arrived while we were still booting aren't applied on top of a stale base.
   const hydratedRef = useRef(false);
@@ -161,7 +164,17 @@ export default function ResultWindow() {
       );
       offs.push(
         await listen<ResultChatStart>(EV.RESULT_CHAT_START, (ev) => {
-          if (!hydratedRef.current) return;
+          // Hydrate on the first turn START we see — not only on `result:replay`.
+          // The replay handshake (this window emits `result:ready`, main replies)
+          // can be missed under HMR: this window fires `result:ready` in the
+          // brief window before main re-registers its listener after a hot
+          // reload, so main never replies and `hydratedRef` stays false FOREVER,
+          // dropping every live delta — the chat then never streams, showing only
+          // the mount-time `get_messages` snapshot. A turn start is a safe point
+          // to begin tracking: it appends a fresh [user, empty-assistant] pair,
+          // so deltas land on the right bubble; a later replay still wins because
+          // it replaces state wholesale.
+          hydratedRef.current = true;
           // A turn started: mirror main's generating so the stop button shows
           // and clear stays disabled for the duration of this turn. Without
           // this, `generating` is seeded only once by `result:replay` at mount
@@ -263,6 +276,16 @@ export default function ResultWindow() {
         <span className="result-title">{isFile ? "文件结果" : "AI 对话"}</span>
         <div className="result-actions">
           <button
+            className="result-btn"
+            type="button"
+            onClick={() => setHistoryOpen((v) => !v)}
+            disabled={isFile}
+            aria-pressed={historyOpen}
+            title="历史对话"
+          >
+            历史
+          </button>
+          <button
             className="result-btn result-btn-icon"
             type="button"
             onClick={togglePin}
@@ -281,7 +304,8 @@ export default function ResultWindow() {
           </button>
         </div>
       </div>
-      <div className="result-body">
+      <div className={"result-body" + (historyOpen && !isFile ? " with-rail" : "")}>
+        {historyOpen && !isFile ? <HistoryRail /> : null}
         {isFile ? (
           <FileResultsView
             query={fileQuery}
@@ -296,6 +320,7 @@ export default function ResultWindow() {
             generating={generating}
             onStop={() => emit(EV.COMMAND_STOP_CHAT).catch(logErr("result emit stop"))}
             onClear={() => emit(EV.COMMAND_CLEAR_CONTEXT).catch(logErr("result emit clear"))}
+            onNew={() => emit(EV.COMMAND_NEW_CONVERSATION).catch(logErr("result emit new"))}
           />
         )}
       </div>

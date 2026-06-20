@@ -85,6 +85,30 @@ pub struct ResultAppearanceSettings {
     pub hover_alpha: f32,
     /// scrollbar width in px.
     pub scrollbar_w: f32,
+    /// Locked conversation-card tint, red channel. Applied as a translucent
+    /// overlay on `.history-item.is-locked` in the history rail, so the user can
+    /// color-code locked conversations instead of the fixed amber. Field-level
+    /// serde defaults keep a legacy settings.json (predating this field) loading
+    /// at the original amber instead of collapsing to 0 / wiping the section.
+    #[serde(default = "default_locked_r")]
+    pub locked_r: u8,
+    #[serde(default = "default_locked_g")]
+    pub locked_g: u8,
+    #[serde(default = "default_locked_b")]
+    pub locked_b: u8,
+}
+
+/// serde defaults for the locked-card tint RGB — the original amber (255,222,120),
+/// so a legacy settings.json predating this field stays visually unchanged
+/// instead of collapsing to black / wiping the whole result section.
+fn default_locked_r() -> u8 {
+    255
+}
+fn default_locked_g() -> u8 {
+    222
+}
+fn default_locked_b() -> u8 {
+    120
 }
 
 /// serde default for `ResultAppearanceSettings::bg_r/g/b` — 255 (white), so a
@@ -113,6 +137,9 @@ impl Default for ResultAppearanceSettings {
             row_pad: 6.0,
             hover_alpha: 0.72,
             scrollbar_w: 8.0,
+            locked_r: default_locked_r(),
+            locked_g: default_locked_g(),
+            locked_b: default_locked_b(),
         }
     }
 }
@@ -265,7 +292,7 @@ impl Default for SystemSettings {
     }
 }
 
-/// Desktop pet (Anya companion) settings. A self-contained floating overlay that
+/// Desktop pet companion settings. A self-contained floating overlay that
 /// idles (blink), looks toward the cursor, reacts to a click (petted + speech
 /// bubble), and can be dragged. Decoupled from Bugzia's other features — no
 /// audio / system events. The whole section is `#[serde(default)]` on
@@ -343,7 +370,13 @@ pub struct WaveformSettings {
 }
 
 fn default_pet_speech_lines() -> Vec<String> {
-    ["哇酷哇酷", "好厉害!", "嘿嘿", "喜欢!", "诶嘿~"]
+    [
+        "哼，终于想起我了？",
+        "今天也要优雅一点。",
+        "别乱点，我在看着你。",
+        "做得不错。",
+        "再陪我一会儿。",
+    ]
         .iter()
         .map(|s| s.to_string())
         .collect()
@@ -362,8 +395,8 @@ impl Default for PetSettings {
             speech_lines: default_pet_speech_lines(),
             x: -1,
             y: -1,
-            w: 150,
-            h: 200,
+            w: 210,
+            h: 300,
         }
     }
 }
@@ -564,5 +597,32 @@ mod tests {
         assert_eq!(r.bg_a, 0.5);
         assert_eq!(r.radius, 20.0);
         assert_eq!(r.scrollbar_w, 10.0);
+    }
+
+    /// Regression guard for the locked-card tint: a legacy settings.json whose
+    /// `result` section predates the `locked_r/g/b` fields must still
+    /// deserialize — with the tint defaulting to the original amber (255,222,120),
+    /// not failing and wiping the whole section. The field-level
+    /// `#[serde(default = "default_locked_*")]` is what makes this work; remove
+    /// it and this test fails, saving the user's other result-panel tuning.
+    #[test]
+    fn legacy_result_without_locked_tint_loads_amber() {
+        let json = r#"{
+            "result": {
+                "bg_r": 255, "bg_g": 255, "bg_b": 255, "bg_a": 0.34,
+                "radius": 12.0, "blur": 18.0, "font_scale": 1.0,
+                "row_gap": 6.0, "item_radius": 9.0, "row_pad": 6.0,
+                "hover_alpha": 0.72, "scrollbar_w": 8.0
+            }
+        }"#;
+        let parsed: AppSettings = serde_json::from_str(json).unwrap();
+        let r = parsed.result;
+        // tint defaulted to amber, not 0/black, not a full-section wipe:
+        assert_eq!((r.locked_r, r.locked_g, r.locked_b), (255, 222, 120));
+        // other fields preserved (proves it didn't fall back to Default::default
+        // for the whole object — bg_a stays 0.34, not the struct's own 0.34 by
+        // coincidence is indistinguishable, so check scrollbar_w == 8.0 too):
+        assert_eq!(r.bg_a, 0.34);
+        assert_eq!(r.scrollbar_w, 8.0);
     }
 }

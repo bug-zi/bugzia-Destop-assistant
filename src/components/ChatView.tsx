@@ -31,13 +31,14 @@ interface ChatViewProps {
   generating: boolean;
   onStop: () => void;
   onClear: () => void;
+  onNew: () => void;
 }
 
 /**
  * Streaming chat surface: a toolbar (stop / clear) and a message list with
  * Markdown-rendered assistant replies. Auto-scrolls while new tokens arrive.
  */
-export default function ChatView({ messages, generating, onStop, onClear }: ChatViewProps) {
+export default function ChatView({ messages, generating, onStop, onClear, onNew }: ChatViewProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -58,11 +59,20 @@ export default function ChatView({ messages, generating, onStop, onClear }: Chat
         <button
           className="chat-btn"
           type="button"
+          onClick={onNew}
+          disabled={generating}
+          title="开始新对话（当前对话已存档）"
+        >
+          ＋ 新对话
+        </button>
+        <button
+          className="chat-btn"
+          type="button"
           onClick={onClear}
           disabled={empty || generating}
           title="清空上下文"
         >
-          🗑 清空上下文
+          清空上下文
         </button>
         {generating ? <span className="chat-typing">生成中…</span> : null}
       </div>

@@ -39,6 +39,12 @@ export function applyResultVars(res: ResultAppearanceSettings): void {
   el.setProperty("--bugzia-result-row-pad", `${res.row_pad}px`);
   el.setProperty("--bugzia-result-hover-alpha", String(res.hover_alpha));
   el.setProperty("--bugzia-result-scrollbar-w", `${res.scrollbar_w}px`);
+  // Locked conversation-card tint (history rail). Read as the RGB channels of a
+  // translucent overlay by .history-item.is-locked; alpha is fixed in the CSS so
+  // the tint strength stays consistent with the glass theme.
+  el.setProperty("--bugzia-result-locked-r", String(res.locked_r));
+  el.setProperty("--bugzia-result-locked-g", String(res.locked_g));
+  el.setProperty("--bugzia-result-locked-b", String(res.locked_b));
 }
 
 /** Load persisted settings and apply appearance to THIS window. */

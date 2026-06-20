@@ -22,10 +22,10 @@ import { currentMonitor, getCurrentWindow } from "@tauri-apps/api/window";
 import { LogicalPosition, LogicalSize } from "@tauri-apps/api/dpi";
 
 const LABEL = "pet";
-const DEFAULT_W = 150;
-const DEFAULT_H = 200;
-const MIN_W = 80;
-const MIN_H = 100;
+const DEFAULT_W = 210;
+const DEFAULT_H = 300;
+const MIN_W = 150;
+const MIN_H = 220;
 
 /** Saved overlay geometry (LOGICAL px) handed to `showPetWindow`. */
 export interface PetGeom {
@@ -158,7 +158,7 @@ export async function showPetWindow(saved?: PetGeom): Promise<void> {
   const pet = await ensurePetWindow();
   if (saved && saved.x >= 0 && saved.y >= 0) {
     const w = Math.max(MIN_W, saved.w || DEFAULT_W);
-    const h = Math.max(MIN_H, saved.h || DEFAULT_H);
+    const h = Math.max(DEFAULT_H, saved.h || DEFAULT_H);
     suppressGeomPersist = true;
     try {
       await pet.setPosition(new LogicalPosition(saved.x, saved.y));

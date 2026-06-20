@@ -83,6 +83,14 @@ export type CommandStopChat = Record<string, never>;
 /** User clicked clear-context in the result window. */
 export type CommandClearContext = Record<string, never>;
 
+/** User clicked "新对话" in the result window — start a fresh conversation. */
+export type CommandNewConversation = Record<string, never>;
+
+/** User clicked a conversation in the history rail — resume it by id. */
+export interface HistoryResume {
+  id: string;
+}
+
 /** User clicked close (or pressed Esc unpinned) in the result window. */
 export type CommandCloseResult = Record<string, never>;
 
@@ -104,10 +112,13 @@ export const EV = {
   RESULT_CHAT_ERROR: "result:chat-error",
   RESULT_CHAT_CLEARED: "result:chat-cleared",
   RESULT_HIDE: "result:hide",
+  HISTORY_CHANGED: "history:changed",
   // result -> main
   RESULT_READY: "result:ready",
   COMMAND_STOP_CHAT: "command:stop-chat",
   COMMAND_CLEAR_CONTEXT: "command:clear-context",
+  COMMAND_NEW_CONVERSATION: "command:new-conversation",
+  HISTORY_RESUME: "history:resume",
   COMMAND_CLOSE_RESULT: "command:close-result",
   COMMAND_PINNED_CHANGED: "command:pinned-changed",
 } as const;

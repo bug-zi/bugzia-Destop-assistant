@@ -8,32 +8,95 @@
   width: 100vw;
   height: 100vh;
   display: flex;
-  align-items: flex-end;
+  flex-direction: column;
+  align-items: center;
   justify-content: center;
   background: transparent;
   cursor: grab;
   --look-x: 0;
   --look-y: 0;
+  --pose-rotate: 0deg;
+  --pose-y: 0px;
+  --pose-opacity: 1;
+  --bubble-h: 60px;
 }
 .pet-root:active {
   cursor: grabbing;
 }
 
+.pet-bubble-layer {
+  position: relative;
+  width: 100%;
+  height: var(--bubble-h);
+  flex: 0 0 var(--bubble-h);
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.pet-body-layer {
+  width: 100%;
+  height: calc(100vh - var(--bubble-h));
+  min-height: 0;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  overflow: visible;
+}
+
 .pet-look {
-  transform: translate(calc(var(--look-x) * 5px), calc(var(--look-y) * 4px));
+  transform: translate(
+      calc(var(--look-x) * 5px),
+      calc((var(--look-y) * 4px) + var(--pose-y))
+    )
+    rotate(var(--pose-rotate));
   transition: transform 140ms ease-out;
 }
 
 .pet-sprite {
   display: block;
-  width: calc(150px * var(--scale, 1));
+  max-width: calc(100vw - 8px);
+  width: auto;
   height: auto;
-  max-height: calc(200px * var(--scale, 1));
+  max-height: calc((100vh - var(--bubble-h) - 4px) * var(--scale, 1));
   user-select: none;
   -webkit-user-drag: none;
   pointer-events: none;
   animation: pet-breathe 3.4s ease-in-out infinite;
   filter: drop-shadow(0 6px 6px rgba(0, 0, 0, 0.28));
+  opacity: var(--pose-opacity);
+}
+
+.pet-pose-happy .pet-sprite {
+  animation: pet-breathe 3.4s ease-in-out infinite, pet-hop 0.8s ease-out;
+}
+
+.pet-pose-surprise .pet-sprite {
+  animation: pet-breathe 3.4s ease-in-out infinite, pet-surprise 0.65s ease-out;
+}
+
+.pet-pose-drag {
+  --pose-rotate: -5deg;
+  --pose-y: -4px;
+}
+
+.pet-pose-drag .pet-sprite {
+  animation: pet-drag-sway 0.42s ease-in-out infinite alternate;
+  filter: drop-shadow(0 10px 9px rgba(0, 0, 0, 0.24));
+}
+
+.pet-pose-sleep {
+  --look-x: 0;
+  --look-y: 0;
+  --pose-rotate: 4deg;
+  --pose-y: 7px;
+  --pose-opacity: 0.92;
+}
+
+.pet-pose-sleep .pet-sprite {
+  animation: pet-sleep-breathe 4.8s ease-in-out infinite;
 }
 
 @keyframes pet-breathe {
@@ -46,15 +109,56 @@
   }
 }
 
+@keyframes pet-hop {
+  0%,
+  100% {
+    transform: translateY(0) scale(1);
+  }
+  34% {
+    transform: translateY(-9px) scale(1.035);
+  }
+  62% {
+    transform: translateY(1px) scale(0.995);
+  }
+}
+
+@keyframes pet-surprise {
+  0%,
+  100% {
+    transform: translateY(0) scale(1);
+  }
+  22% {
+    transform: translateY(-7px) scale(1.05);
+  }
+  44% {
+    transform: translateY(0) scale(0.98);
+  }
+  66% {
+    transform: translateY(-3px) scale(1.02);
+  }
+}
+
+@keyframes pet-drag-sway {
+  from {
+    transform: rotate(-2deg) scale(1.01);
+  }
+  to {
+    transform: rotate(2deg) scale(1.01);
+  }
+}
+
+@keyframes pet-sleep-breathe {
+  0%,
+  100% {
+    transform: scale(0.985);
+  }
+  50% {
+    transform: scale(1.01);
+  }
+}
+
 .pet-bubble {
-  position: absolute;
-  /* Top-anchored (not bottom:190px) so the bubble stays INSIDE the 200px-tall
-     window — bottom-anchoring pushed its top edge above the window and it got
-     clipped. z-index lifts it above the sprite, which fills the window and
-     would otherwise paint over it (the bubble precedes the sprite in the DOM). */
-  top: 6px;
-  left: 50%;
-  transform: translateX(-50%);
+  position: relative;
   z-index: 2;
   background: rgba(255, 255, 255, 0.94);
   color: #5a3b46;
@@ -67,13 +171,39 @@
   pointer-events: none;
 }
 
+.pet-snooze {
+  position: relative;
+  z-index: 3;
+  color: rgba(90, 59, 70, 0.72);
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0;
+  text-shadow: 0 1px 3px rgba(255, 255, 255, 0.9);
+  animation: pet-snooze 1.8s ease-in-out infinite;
+  pointer-events: none;
+}
+
 @keyframes pet-pop {
   from {
     opacity: 0;
-    transform: translateX(-50%) translateY(6px);
+    transform: translateY(6px);
   }
   to {
     opacity: 1;
-    transform: translateX(-50%) translateY(0);
+    transform: translateY(0);
+  }
+}
+
+@keyframes pet-snooze {
+  0% {
+    opacity: 0;
+    transform: translateY(6px) scale(0.92);
+  }
+  45% {
+    opacity: 0.9;
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(-12px) scale(1.06);
   }
 }

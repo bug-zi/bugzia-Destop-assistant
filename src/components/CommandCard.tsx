@@ -7,6 +7,7 @@ import InputBar from "./InputBar";
 import "./CommandCard.css";
 import { browserSearch, COMMANDS, parseCommand, SEARCH_ENGINES, type CommandMode, type SearchEngine } from "../features/search/command";
 import { streamChat, streamOnce, stopChat, clearContext, type ChatEvent, type ChatMessage } from "../features/ai/chat";
+import { listConversations, getConversation, upsertConversation, deriveTitle } from "../features/conversations/conversations";
 import { loadSettings, saveSettings } from "../features/settings/settingsStore";
 import { openSettingsWindow } from "../features/settings/settingsWindow";
 import { applyAppearanceVars } from "../features/appearance/appearance";
@@ -95,6 +96,12 @@ export default function CommandCard() {
   // Result-window pin state (mirrored from the result window's toggle).
   const pinnedRef = useRef(false);
 
+  // Active conversation id (null = brand-new, not yet persisted). The frontend
+  // mirror is the persistence source of truth; on resume it is pushed back into
+  // ChatState via `set_messages`.
+  const activeIdRef = useRef<string | null>(null);
+  const persistTimer = useRef<number | null>(null);
+
   // One-line status shown in the bar without stretching the layout.
   const [statusText, setStatusText] = useState("");
 
@@ -148,6 +155,32 @@ export default function CommandCard() {
       searching: searchingRef.current,
     }).catch(logErr("emit replay"));
   }, []);
+
+  /** Persist the active conversation from the live mirror (debounced). Skips an
+   *  empty mirror so a cleared screen never clobbers an existing record. The
+   *  debounce delay is long enough that `messagesRef` (synced one render later)
+   *  is fresh by the time this fires. */
+  const persistActive = useCallback(async () => {
+    const msgs = messagesRef.current;
+    if (msgs.length === 0) return;
+    try {
+      const title = deriveTitle(msgs);
+      const id = await upsertConversation(activeIdRef.current, title, msgs);
+      activeIdRef.current = id;
+      emit(EV.HISTORY_CHANGED).catch(logErr("emit history-changed"));
+    } catch (e) {
+      logErr("persist conversation")(e);
+    }
+  }, []);
+
+  /** Debounced schedule of `persistActive`. Called after every turn completes. */
+  const schedulePersist = useCallback(() => {
+    if (persistTimer.current) clearTimeout(persistTimer.current);
+    persistTimer.current = window.setTimeout(() => {
+      persistTimer.current = null;
+      void persistActive();
+    }, 600);
+  }, [persistActive]);
 
   /** Show the result overlay and mirror it as open. Centralizes the show call so
    *  every path (AI turn, /file search, spark toggle) stays in sync with
@@ -294,10 +327,82 @@ export default function CommandCard() {
       );
       offs.push(
         await listen(EV.COMMAND_CLEAR_CONTEXT, () => {
+          // Keep original behavior (wipe context + screen); additionally rotate
+          // activeId so the next turn starts a new record instead of clobbering
+          // the just-saved one.
+          activeIdRef.current = null;
           void clearContext().catch(logErr("clear_context"));
           setMessages([]);
           setStatusText("");
           emit(EV.RESULT_CHAT_CLEARED).catch(logErr("emit cleared"));
+          emit(EV.HISTORY_CHANGED).catch(logErr("emit history-changed"));
+        }),
+      );
+      offs.push(
+        await listen(EV.COMMAND_NEW_CONVERSATION, async () => {
+          if (generatingRef.current) return;
+          // Flush the current conversation (in case a debounced save hadn't
+          // fired), then rotate to a brand-new one.
+          await persistActive();
+          activeIdRef.current = null;
+          void clearContext().catch(logErr("clear_context"));
+          setMessages([]);
+          setStatusText("");
+          emit(EV.RESULT_CHAT_CLEARED).catch(logErr("emit cleared"));
+          emit(EV.HISTORY_CHANGED).catch(logErr("emit history-changed"));
+          // No emitReplay() here: RESULT_CHAT_CLEARED already empties the result
+          // window, and emitReplay() would read messagesRef BEFORE the just-queued
+          // setMessages([]) has flushed (the sync-effect runs only after render),
+          // so it would re-push the OLD messages and the screen would refuse to
+          // clear — making "新对话" look like it failed.
+        }),
+      );
+      offs.push(
+        await listen<{ id: string }>(EV.HISTORY_RESUME, async (ev) => {
+          if (generatingRef.current) return;
+          const id = ev.payload.id;
+          try {
+            const msgs = await getConversation(id);
+            activeIdRef.current = id;
+            setMessages(msgs);
+            // Sync the ref immediately: emitReplay() below reads messagesRef,
+            // which the sync-effect only updates AFTER render. Without this the
+            // resumed messages could be sent stale (the pre-resume mirror), so
+            // the result window would briefly show the wrong conversation.
+            messagesRef.current = msgs;
+            await invoke("set_messages", { messages: msgs }).catch(logErr("set_messages"));
+            modeRef.current = "chat";
+            setStatusText(msgs.length ? `已恢复 ${msgs.length} 条` : "");
+            await revealResult();
+            emit(EV.RESULT_SET_MODE, { mode: "chat" }).catch(logErr("emit set-mode"));
+            emitReplay();
+          } catch (e) {
+            logErr("resume conversation")(e);
+          }
+        }),
+      );
+      offs.push(
+        await listen(EV.HISTORY_CHANGED, async () => {
+          // The rail may have deleted the active conversation; if so, clear the
+          // mirror so we don't keep editing a ghost. (Own persists also ping
+          // here — harmless: the active id is still present, no-op.)
+          const aid = activeIdRef.current;
+          if (!aid) return;
+          try {
+            const all = await listConversations();
+            if (!all.some((c) => c.id === aid)) {
+              activeIdRef.current = null;
+              void clearContext().catch(logErr("clear_context"));
+              setMessages([]);
+              setStatusText("");
+              // Tell the result window to clear directly. emitReplay() would read
+              // messagesRef before the setMessages([]) above has flushed (the
+              // sync-effect runs post-render) and re-push the stale messages.
+              emit(EV.RESULT_CHAT_CLEARED).catch(logErr("emit cleared"));
+            }
+          } catch (e) {
+            logErr("history-changed check")(e);
+          }
         }),
       );
       offs.push(
@@ -577,6 +682,7 @@ export default function CommandCard() {
         logErr("emit done"),
       );
       setStatusText("已回复");
+      schedulePersist();
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
       setMessages((m) => patchLastAssistant(m, () => `错误：${message}`));
@@ -635,6 +741,7 @@ export default function CommandCard() {
             logErr("emit done"),
           );
           setStatusText("已回复");
+          schedulePersist();
         } else if (e.event === "error") {
           const message = e.data.message;
           setMessages((m) => patchLastAssistant(m, () => `错误：${message}`));
@@ -744,6 +851,7 @@ export default function CommandCard() {
           logErr("emit done"),
         );
         setStatusText("已回复");
+        schedulePersist();
       } else if (e.event === "error") {
         setMessages((m) => patchLastAssistant(m, () => `⚠️ ${e.data.message}`));
         emit(EV.RESULT_CHAT_ERROR, { message: e.data.message }).catch(logErr("emit error"));
