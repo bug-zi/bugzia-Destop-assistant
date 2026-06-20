@@ -48,9 +48,14 @@
 
 .pet-bubble {
   position: absolute;
-  bottom: calc(190px * var(--scale, 1));
+  /* Top-anchored (not bottom:190px) so the bubble stays INSIDE the 200px-tall
+     window — bottom-anchoring pushed its top edge above the window and it got
+     clipped. z-index lifts it above the sprite, which fills the window and
+     would otherwise paint over it (the bubble precedes the sprite in the DOM). */
+  top: 6px;
   left: 50%;
   transform: translateX(-50%);
+  z-index: 2;
   background: rgba(255, 255, 255, 0.94);
   color: #5a3b46;
   padding: 6px 12px;
