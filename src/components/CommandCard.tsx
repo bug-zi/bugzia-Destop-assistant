@@ -10,7 +10,7 @@ import { streamChat, streamOnce, stopChat, clearContext, type ChatEvent, type Ch
 import { loadSettings, saveSettings } from "../features/settings/settingsStore";
 import { openSettingsWindow } from "../features/settings/settingsWindow";
 import { applyAppearanceVars } from "../features/appearance/appearance";
-import type { AppSettings, WaveformSettings, WindowSettings, SettingsPatch } from "../features/settings/settingsTypes";
+import type { AppSettings, PetSettings, WaveformSettings, WindowSettings, SettingsPatch } from "../features/settings/settingsTypes";
 import {
   hideResultWindow,
   isResultVisible,
@@ -22,6 +22,11 @@ import {
   onWaveformGeometryChange,
   showWaveformWindow,
 } from "../features/waveform/waveformWindow";
+import {
+  hidePetWindow,
+  onPetGeometryChange,
+  showPetWindow,
+} from "../features/pet/petWindow";
 import { EV, type FileResult, type ResultMode } from "../features/result/resultTypes";
 
 const COLLAPSED_H = 64;
@@ -265,6 +270,7 @@ export default function CommandCard() {
           search: ev.payload.search,
           window: { ...cur.window, locked: ev.payload.windowLocked },
           waveform: ev.payload.waveform ?? cur.waveform,
+          pet: ev.payload.pet ?? cur.pet,
         };
         update(merged);
         applyAppearanceVars(merged.appearance);
@@ -338,8 +344,9 @@ export default function CommandCard() {
   // resolves so the window definitely exists before the backend commands target
   // it (they'd otherwise error "waveform window not found").
 
-  // Tray "桌面波形" toggle persists in Rust + emits settings://changed. Reload the
-  // authoritative settings so our mirror — and the enabled effect below — sync.
+  // Tray toggles (桌面波形 / 桌宠) persist in Rust + emit settings://changed.
+  // Reload the authoritative settings so our mirror — and the enabled effects
+  // below — sync.
   useEffect(() => {
     let unlisten: UnlistenFn | undefined;
     let alive = true;
@@ -437,6 +444,59 @@ export default function CommandCard() {
       patchWaveform(patch);
     });
   }, [patchWaveform]);
+
+  // ── pet overlay lifecycle ────────────────────────────────────────────────
+  // The pet window is created from the frontend (ACL) and main is the sole
+  // settings.json writer, so show/hide + pin + click-through live here. The
+  // shared settings://changed reload above (also driven by the tray "桌宠"
+  // toggle) feeds fresh settings into the enabled effect below.
+
+  // enabled: show + apply pin/lock (after the window exists), or hide.
+  useEffect(() => {
+    const pet = settings?.pet;
+    if (!pet) return;
+    if (pet.enabled) {
+      void showPetWindow({ x: pet.x, y: pet.y, w: pet.w, h: pet.h })
+        .then(() => {
+          void invoke("pet_set_always_on_top", { top: pet.always_on_top }).catch(
+            logErr("pet on_top"),
+          );
+          void invoke("pet_set_locked", { locked: pet.locked }).catch(logErr("pet lock"));
+        })
+        .catch(logErr("show pet"));
+    } else {
+      void hidePetWindow().catch(logErr("hide pet"));
+    }
+  }, [settings?.pet.enabled]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Live pin / click-through toggles while the pet is already open.
+  useEffect(() => {
+    if (!settings?.pet.enabled) return;
+    void invoke("pet_set_always_on_top", { top: settings.pet.always_on_top }).catch(
+      logErr("pet on_top"),
+    );
+  }, [settings?.pet.always_on_top, settings?.pet.enabled]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (!settings?.pet.enabled) return;
+    void invoke("pet_set_locked", { locked: settings.pet.locked }).catch(logErr("pet lock"));
+  }, [settings?.pet.locked, settings?.pet.enabled]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Persist the pet window's geometry when the USER moves/resizes it, so a
+  // manual placement + size survives an app restart. Programmatic placements on
+  // show are suppressed in petWindow.ts.
+  useEffect(() => {
+    onPetGeometryChange((g) => {
+      const cur = settingsRef.current;
+      if (!cur) return;
+      const patch: Partial<PetSettings> = {};
+      if (g.x !== undefined) patch.x = g.x;
+      if (g.y !== undefined) patch.y = g.y;
+      if (g.w !== undefined) patch.w = g.w;
+      if (g.h !== undefined) patch.h = g.h;
+      update({ ...cur, pet: { ...cur.pet, ...patch } });
+    });
+  }, [update]);
 
   function resolveEngine(): SearchEngine {
     const s = settingsRef.current;
