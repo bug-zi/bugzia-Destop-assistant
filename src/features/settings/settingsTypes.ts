@@ -139,6 +139,31 @@ export interface WaveformSettings {
   h: number;
 }
 
+/**
+ * Desktop pet (Anya companion) settings. Frontend mirror of Rust `PetSettings`
+ * (src-tauri/src/settings.rs); field names MUST match the serde JSON keys exactly.
+ *
+ * Self-contained overlay: idles (blink), looks toward the cursor, reacts to a
+ * click (petted + speech bubble), can be dragged. No audio / system events.
+ * x/y of -1 = never placed by the user (show defaults to lower-right).
+ */
+export interface PetSettings {
+  enabled: boolean;
+  always_on_top: boolean;
+  locked: boolean;
+  /** Sprite scale multiplier, 1 = native image size. */
+  scale: number;
+  blink_interval_ms: number;
+  speech_enabled: boolean;
+  speech_interval_ms: number;
+  speech_lines: string[];
+  /** -1 sentinel = never placed by the user. */
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
 export interface AppSettings {
   appearance: AppearanceSettings;
   result: ResultAppearanceSettings;
@@ -147,6 +172,7 @@ export interface AppSettings {
   search: SearchSettings;
   system: SystemSettings;
   waveform: WaveformSettings;
+  pet: PetSettings;
 }
 
 export const DEFAULT_APPEARANCE: AppearanceSettings = {
@@ -229,6 +255,21 @@ export const DEFAULT_WAVEFORM: WaveformSettings = {
   h: 200,
 };
 
+export const DEFAULT_PET: PetSettings = {
+  enabled: false,
+  always_on_top: true,
+  locked: false,
+  scale: 1,
+  blink_interval_ms: 4000,
+  speech_enabled: true,
+  speech_interval_ms: 20000,
+  speech_lines: ["哇酷哇酷", "好厉害!", "嘿嘿", "喜欢!", "诶嘿~"],
+  x: -1,
+  y: -1,
+  w: 150,
+  h: 200,
+};
+
 export const DEFAULT_SETTINGS: AppSettings = {
   appearance: DEFAULT_APPEARANCE,
   result: DEFAULT_RESULT,
@@ -237,6 +278,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   search: DEFAULT_SEARCH,
   system: DEFAULT_SYSTEM,
   waveform: DEFAULT_WAVEFORM,
+  pet: DEFAULT_PET,
 };
 
 /**
@@ -252,4 +294,5 @@ export interface SettingsPatch {
   search: SearchSettings;
   windowLocked: boolean;
   waveform: WaveformSettings;
+  pet: PetSettings;
 }
