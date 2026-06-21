@@ -180,9 +180,19 @@ export default function HistoryRail() {
                   (dragOver ? " is-drag-over" : "")
                 }
                 draggable={!editing}
-                onDragStart={() => setDragIndex(i)}
+                onDragStart={(e) => {
+                  // Some WebViews (WebKit/WebKitGTK) need effectAllowed + a
+                  // payload to start a drag on a non-text element; Chromium
+                  // tolerates their absence but we set them for cross-platform
+                  // robustness. The payload value is unused — dragIndex is the
+                  // source of truth.
+                  e.dataTransfer.effectAllowed = "move";
+                  e.dataTransfer.setData("text/plain", String(i));
+                  setDragIndex(i);
+                }}
                 onDragOver={(e) => {
                   e.preventDefault(); // allow drop
+                  e.dataTransfer.dropEffect = "move";
                   setOverIndex(i);
                 }}
                 onDrop={(e) => {
