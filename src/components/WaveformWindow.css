@@ -1,7 +1,8 @@
 /* Desktop waveform overlay. Transparent, borderless; the whole surface drags
-   via data-tauri-drag-region on the root, while the canvas is pointer-events:
-   none so it never swallows the drag. Petals are painted by the rAF loop in
-   WaveformWindow.tsx (CSS px coordinates). */
+   via manual startDragging() in WaveformWindow.tsx (NOT data-tauri-drag-region,
+   which conflicts with the click-through lock on Windows and kept a locked
+   window draggable), while the canvas is pointer-events: none so it never
+   swallows the drag. Petals are painted by the rAF loop (CSS px coordinates). */
 .waveform-root {
   width: 100%;
   height: 100%;
@@ -21,6 +22,6 @@
   width: 100%;
   height: 100%;
   display: block;
-  /* Let drag-region pointer events reach the root; the canvas only renders. */
+  /* Let the root's pointer handlers receive events; the canvas only renders. */
   pointer-events: none;
 }

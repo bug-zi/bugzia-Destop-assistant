@@ -1,4 +1,4 @@
-import type { AppearanceSettings, ResultAppearanceSettings } from "../settings/settingsTypes";
+import type { AppearanceSettings, NoteSettings, ResultAppearanceSettings } from "../settings/settingsTypes";
 import { loadSettings } from "../settings/settingsStore";
 
 /**
@@ -51,4 +51,23 @@ export function applyResultVars(res: ResultAppearanceSettings): void {
 export async function loadAndApplyAppearance(): Promise<void> {
   const s = await loadSettings();
   applyAppearanceVars(s.appearance);
+}
+
+/**
+ * Apply sticky-note style defaults to CSS custom properties only a note window
+ * reads (--bugzia-note-*). Called by NoteWindow on hydrate + on every
+ * note://settings broadcast, so a settings-panel tweak recolors open notes live.
+ */
+export function applyNoteVars(n: NoteSettings): void {
+  const el = document.documentElement.style;
+  el.setProperty("--bugzia-note-bg-r", String(n.bg_r));
+  el.setProperty("--bugzia-note-bg-g", String(n.bg_g));
+  el.setProperty("--bugzia-note-bg-b", String(n.bg_b));
+  el.setProperty("--bugzia-note-text-r", String(n.text_r));
+  el.setProperty("--bugzia-note-text-g", String(n.text_g));
+  el.setProperty("--bugzia-note-text-b", String(n.text_b));
+  el.setProperty("--bugzia-note-radius", `${n.radius}px`);
+  el.setProperty("--bugzia-note-font-size", `${n.font_size}px`);
+  el.setProperty("--bugzia-note-bg-alpha", String(n.bg_alpha));
+  el.setProperty("--bugzia-note-text-alpha", String(n.text_alpha));
 }

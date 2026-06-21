@@ -168,6 +168,37 @@ export interface PetSettings {
   h: number;
 }
 
+/**
+ * Desktop sticky-note DEFAULTS (the `/note <content>` feature). Frontend mirror
+ * of Rust `NoteSettings` (src-tauri/src/settings.rs); field names MUST match the
+ * serde JSON keys exactly. These are style/size defaults applied to a freshly
+ * created note; per-instance content + geometry of PINNED notes lives in
+ * notes.json (user data), not here.
+ */
+export interface NoteSettings {
+  /** Note background color (default sakura deep red #9E1B32). */
+  bg_r: number;
+  bg_g: number;
+  bg_b: number;
+  /** Note text color (default white). */
+  text_r: number;
+  text_g: number;
+  text_b: number;
+  /** Default note width, LOGICAL px. */
+  w: number;
+  /** Default note height, LOGICAL px. */
+  h: number;
+  /** Corner radius in px. */
+  radius: number;
+  /** Font size in px. */
+  font_size: number;
+  /** 0..1 BACKGROUND fill opacity (the note's translucent backing, independent
+   *  of text so the body can be see-through while text stays crisp). */
+  bg_alpha: number;
+  /** 0..1 TEXT opacity (body text + textarea; independent of background). */
+  text_alpha: number;
+}
+
 export interface AppSettings {
   appearance: AppearanceSettings;
   result: ResultAppearanceSettings;
@@ -177,14 +208,15 @@ export interface AppSettings {
   system: SystemSettings;
   waveform: WaveformSettings;
   pet: PetSettings;
+  note: NoteSettings;
 }
 
 export const DEFAULT_APPEARANCE: AppearanceSettings = {
-  bg_r: 255,
-  bg_g: 255,
-  bg_b: 255,
-  bg_a: 0.34,
-  blur: 18,
+  bg_r: 254,
+  bg_g: 210,
+  bg_b: 210,
+  bg_a: 0.11,
+  blur: 40,
   radius: 12,
   font_scale: 1,
 };
@@ -193,7 +225,7 @@ export const DEFAULT_RESULT: ResultAppearanceSettings = {
   bg_r: 255,
   bg_g: 255,
   bg_b: 255,
-  bg_a: 0.34,
+  bg_a: 0.11,
   radius: 12,
   blur: 18,
   font_scale: 1,
@@ -203,8 +235,8 @@ export const DEFAULT_RESULT: ResultAppearanceSettings = {
   hover_alpha: 0.72,
   scrollbar_w: 8,
   locked_r: 255,
-  locked_g: 222,
-  locked_b: 120,
+  locked_g: 135,
+  locked_b: 135,
 };
 
 export const DEFAULT_WINDOW: WindowSettings = {
@@ -221,9 +253,9 @@ export const DEFAULT_WINDOW: WindowSettings = {
 };
 
 export const DEFAULT_AI: AiSettings = {
-  provider_name: "",
-  base_url: "",
-  model: "",
+  provider_name: "vibe",
+  base_url: "https://token.aiedulab.cn/v1",
+  model: "gpt-5.5",
   system_prompt: "",
   temperature: 0.7,
   stream: true,
@@ -242,20 +274,20 @@ export const DEFAULT_SYSTEM: SystemSettings = {
 };
 
 export const DEFAULT_WAVEFORM: WaveformSettings = {
-  enabled: false,
+  enabled: true,
   always_on_top: false,
   locked: false,
   opacity: 0.95,
   sensitivity: 1.0,
-  petal_size: 14.0,
-  petal_density: 60,
-  drift_speed: 1.0,
+  petal_size: 4.0,
+  petal_density: 136,
+  drift_speed: 0.6,
   color_r: 255,
-  color_g: 183,
-  color_b: 197, // #FFB7C5 sakura pink
+  color_g: 82,
+  color_b: 116, // #FF5274 rose pink (user-tuned)
   accent_r: 255,
-  accent_g: 255,
-  accent_b: 255,
+  accent_g: 148,
+  accent_b: 148, // #FF9494 light pink highlight
   x: -1, // sentinel: -1 = "never placed by user" -> default lower-center placement
   y: -1,
   w: 380,
@@ -263,8 +295,8 @@ export const DEFAULT_WAVEFORM: WaveformSettings = {
 };
 
 export const DEFAULT_PET: PetSettings = {
-  enabled: false,
-  always_on_top: true,
+  enabled: true,
+  always_on_top: false,
   locked: false,
   scale: 1,
   blink_interval_ms: 4000,
@@ -277,6 +309,21 @@ export const DEFAULT_PET: PetSettings = {
   h: 300,
 };
 
+export const DEFAULT_NOTE: NoteSettings = {
+  bg_r: 201,
+  bg_g: 88,
+  bg_b: 119, // #C95877 rose pink (user-tuned)
+  text_r: 255,
+  text_g: 255,
+  text_b: 255, // white
+  w: 240,
+  h: 220,
+  radius: 10,
+  font_size: 14,
+  bg_alpha: 0.9,
+  text_alpha: 1.0,
+};
+
 export const DEFAULT_SETTINGS: AppSettings = {
   appearance: DEFAULT_APPEARANCE,
   result: DEFAULT_RESULT,
@@ -286,6 +333,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   system: DEFAULT_SYSTEM,
   waveform: DEFAULT_WAVEFORM,
   pet: DEFAULT_PET,
+  note: DEFAULT_NOTE,
 };
 
 /**
@@ -302,4 +350,5 @@ export interface SettingsPatch {
   windowLocked: boolean;
   waveform: WaveformSettings;
   pet: PetSettings;
+  note: NoteSettings;
 }

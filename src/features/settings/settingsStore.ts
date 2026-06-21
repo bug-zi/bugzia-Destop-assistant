@@ -15,6 +15,7 @@ export async function loadSettings(): Promise<AppSettings> {
       system: { ...DEFAULT_SETTINGS.system, ...s.system },
       waveform: { ...DEFAULT_SETTINGS.waveform, ...s.waveform },
       pet: { ...DEFAULT_SETTINGS.pet, ...s.pet },
+      note: { ...DEFAULT_SETTINGS.note, ...s.note },
     };
   } catch (e) {
     console.error("[bugzia] load_settings failed", e);

@@ -22,3 +22,20 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Pet sprite pack (vampire-sprite-v1): only the 10 runtime sprite sheets that
+# PetWindow.tsx imports at build time are tracked. Everything else stays local
+# to keep the repo lean -- chroma source art, intermediate sheets, legacy
+# single-frame poses, dev previews, alpha-key maps, manifests. If PetWindow
+# later imports more runtime sheets, add them as exceptions here too.
+assets/pet/vampire-sprite-v1/chroma-source/
+assets/pet/vampire-sprite-v1/sheets/
+assets/pet/vampire-sprite-v1/poses/
+assets/pet/vampire-sprite-v1/preview-contact-sheet.png
+assets/pet/vampire-sprite-v1/manifest.json
+assets/pet/vampire-sprite-v1/runtime/*_key.png
+assets/pet/vampire-sprite-v1/runtime/contact-sheet.png
+assets/pet/vampire-sprite-v1/runtime/generated-action-sheet.png
+assets/pet/vampire-sprite-v1/runtime/generated-action-sheet-chroma.png
+assets/pet/vampire-sprite-v1/runtime/idle-breathe.png
+assets/pet/vampire-sprite-v1/runtime/runtime-manifest.json

@@ -5,29 +5,46 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { loadSettings } from "../features/settings/settingsStore";
 import { DEFAULT_PET, type PetSettings } from "../features/settings/settingsTypes";
 import "./PetWindow.css";
-import idleSrc from "../../assets/pet/vampire-sprite-v1/poses/idle.png";
-import blinkSrc from "../../assets/pet/vampire-sprite-v1/poses/blink.png";
-import happySrc from "../../assets/pet/vampire-sprite-v1/poses/happy.png";
-import dragSrc from "../../assets/pet/vampire-sprite-v1/poses/drag.png";
-import surpriseSrc from "../../assets/pet/vampire-sprite-v1/poses/surprise.png";
-import sleepSrc from "../../assets/pet/vampire-sprite-v1/poses/sleep.png";
+import blinkSheetSrc from "../../assets/pet/vampire-sprite-v1/runtime/blink.png";
+import dragSheetSrc from "../../assets/pet/vampire-sprite-v1/runtime/drag.png";
+import dropSheetSrc from "../../assets/pet/vampire-sprite-v1/runtime/drop.png";
+import happySheetSrc from "../../assets/pet/vampire-sprite-v1/runtime/happy.png";
+import idleSheetSrc from "../../assets/pet/vampire-sprite-v1/runtime/idle.png";
+import sleepStartSheetSrc from "../../assets/pet/vampire-sprite-v1/runtime/sleep_start.png";
+import sleepSheetSrc from "../../assets/pet/vampire-sprite-v1/runtime/sleep.png";
+import surpriseSheetSrc from "../../assets/pet/vampire-sprite-v1/runtime/surprise.png";
+import wakeSheetSrc from "../../assets/pet/vampire-sprite-v1/runtime/wake.png";
+import waveSheetSrc from "../../assets/pet/vampire-sprite-v1/runtime/wave.png";
 
-type Pose = "idle" | "blink" | "happy" | "drag" | "surprise" | "sleep";
-const BUILTIN_POSE_SRCS: Record<Pose, string> = {
-  idle: idleSrc,
-  blink: blinkSrc,
-  happy: happySrc,
-  drag: dragSrc,
-  surprise: surpriseSrc,
-  sleep: sleepSrc,
-};
-const POSE_ASSET_FALLBACKS: Record<Pose, Pose[]> = {
-  idle: ["idle"],
-  blink: ["blink", "idle"],
-  happy: ["happy", "idle"],
-  drag: ["drag", "happy", "idle"],
-  surprise: ["surprise", "happy", "idle"],
-  sleep: ["sleep", "blink", "idle"],
+type PetAction =
+  | "idle"
+  | "blink"
+  | "happy"
+  | "drag"
+  | "drop"
+  | "surprise"
+  | "sleep_start"
+  | "sleep"
+  | "wake"
+  | "wave";
+interface ActionSpec {
+  src: string;
+  frames: number;
+  fps: number;
+  loop: boolean;
+  next?: PetAction;
+}
+const ACTIONS: Record<PetAction, ActionSpec> = {
+  idle: { src: idleSheetSrc, frames: 6, fps: 8, loop: true },
+  blink: { src: blinkSheetSrc, frames: 4, fps: 12, loop: false, next: "idle" },
+  happy: { src: happySheetSrc, frames: 6, fps: 12, loop: false, next: "idle" },
+  drag: { src: dragSheetSrc, frames: 4, fps: 10, loop: true },
+  drop: { src: dropSheetSrc, frames: 5, fps: 12, loop: false, next: "idle" },
+  surprise: { src: surpriseSheetSrc, frames: 6, fps: 14, loop: false, next: "idle" },
+  sleep_start: { src: sleepStartSheetSrc, frames: 5, fps: 8, loop: false, next: "sleep" },
+  sleep: { src: sleepSheetSrc, frames: 4, fps: 6, loop: true },
+  wake: { src: wakeSheetSrc, frames: 5, fps: 12, loop: false, next: "idle" },
+  wave: { src: waveSheetSrc, frames: 5, fps: 12, loop: false, next: "idle" },
 };
 const DOUBLE_CLICK_MS = 320;
 const AUTO_SLEEP_MS = 45_000;
@@ -41,11 +58,10 @@ type PetEvent =
   | { type: "surprise" }
   | { type: "sleep" }
   | { type: "wake" }
-  | { type: "to-idle" };
+  | { type: "wave" }
+  | { type: "complete"; action: PetAction };
 
-/** Pose state machine. `happy`/`blink` are transient — an effect reverts them to
- *  `idle` after a short delay (see `useEffect([pose])`). */
-function petReducer(state: Pose, event: PetEvent): Pose {
+function petReducer(state: PetAction, event: PetEvent): PetAction {
   switch (event.type) {
     case "pet":
       return "happy";
@@ -54,15 +70,18 @@ function petReducer(state: Pose, event: PetEvent): Pose {
     case "drag-start":
       return "drag";
     case "drag-end":
-      return "idle";
+      return state === "drag" ? "drop" : state;
     case "surprise":
       return "surprise";
     case "sleep":
-      return state === "idle" ? "sleep" : state;
+      return state === "idle" ? "sleep_start" : state;
     case "wake":
-      return state === "sleep" ? "idle" : state;
-    case "to-idle":
-      return "idle";
+      return state === "sleep" ? "wake" : state;
+    case "complete":
+      if (state !== event.action) return state;
+      return ACTIONS[state].next ?? "idle";
+    case "wave":
+      return state === "idle" ? "wave" : state;
     default:
       return state;
   }
@@ -86,28 +105,16 @@ function randomLine(lines: string[]): string {
   return lines[Math.floor(Math.random() * lines.length)];
 }
 
-function pickPoseAsset(
-  poseSrcs: Record<Pose, string> | null,
-  failed: Partial<Record<Pose, boolean>>,
-  pose: Pose,
-): { src: string | null; assetPose: Pose } {
-  for (const assetPose of POSE_ASSET_FALLBACKS[pose]) {
-    const src = poseSrcs?.[assetPose];
-    if (src && !failed[assetPose]) return { src, assetPose };
-  }
-  return { src: null, assetPose: pose };
-}
-
 export default function PetWindow() {
-  const [pose, dispatch] = useReducer(petReducer, "idle");
+  const [action, dispatch] = useReducer(petReducer, "idle");
+  const actionSpec = ACTIONS[action];
   const [settings, setSettings] = useState<PetSettings>(DEFAULT_PET);
   const settingsRef = useRef<PetSettings>(DEFAULT_PET);
-  const poseRef = useRef<Pose>("idle");
+  const actionRef = useRef<PetAction>("idle");
   const lastInteractionRef = useRef(Date.now());
   const lastClickAtRef = useRef(0);
   const [bubble, setBubble] = useState<string | null>(null);
-  const [poseSrcs] = useState<Record<Pose, string>>(BUILTIN_POSE_SRCS);
-  const [failed, setFailed] = useState<Partial<Record<Pose, boolean>>>({});
+  const [frame, setFrame] = useState(0);
   const rootRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -115,8 +122,23 @@ export default function PetWindow() {
   }, [settings]);
 
   useEffect(() => {
-    poseRef.current = pose;
-  }, [pose]);
+    actionRef.current = action;
+    setFrame(0);
+  }, [action]);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      setFrame((current) => {
+        const spec = ACTIONS[actionRef.current];
+        const next = current + 1;
+        if (next < spec.frames) return next;
+        if (spec.loop) return 0;
+        dispatch({ type: "complete", action: actionRef.current });
+        return current;
+      });
+    }, 1000 / actionSpec.fps);
+    return () => window.clearInterval(timer);
+  }, [actionSpec.fps]);
 
   // Load settings on mount. The displayed art is the bundled vampire-sprite-v1
   // set, so stale user-dir pose PNGs cannot accidentally bring back old art.
@@ -127,6 +149,7 @@ export default function PetWindow() {
       if (!alive) return;
       settingsRef.current = s.pet;
       setSettings(s.pet);
+      dispatch({ type: "wave" });
     })();
     return () => {
       alive = false;
@@ -152,14 +175,6 @@ export default function PetWindow() {
     };
   }, []);
 
-  // Revert a transient pose (happy / blink) back to idle.
-  useEffect(() => {
-    if (pose === "idle" || pose === "drag" || pose === "sleep") return;
-    const ms = pose === "blink" ? 200 : pose === "surprise" ? 650 : 800;
-    const t = window.setTimeout(() => dispatch({ type: "to-idle" }), ms);
-    return () => window.clearTimeout(t);
-  }, [pose]);
-
   // Idle blink timer (recursive). Cheap; keeps running while hidden (no harm).
   useEffect(() => {
     const iv = settings.blink_interval_ms;
@@ -169,7 +184,7 @@ export default function PetWindow() {
     const schedule = () => {
       timer = window.setTimeout(() => {
         if (stopped) return;
-        if (poseRef.current === "idle") dispatch({ type: "blink" });
+        if (actionRef.current === "idle") dispatch({ type: "blink" });
         schedule();
       }, iv);
     };
@@ -193,7 +208,7 @@ export default function PetWindow() {
     const schedule = (delay: number) => {
       timer = window.setTimeout(() => {
         if (stopped) return;
-        if (poseRef.current !== "sleep" && poseRef.current !== "drag") {
+        if (actionRef.current !== "sleep" && actionRef.current !== "drag") {
           setBubble(randomLine(lines));
         }
         schedule(iv);
@@ -216,7 +231,7 @@ export default function PetWindow() {
   useEffect(() => {
     const timer = window.setInterval(() => {
       if (settingsRef.current.locked) return;
-      if (poseRef.current === "idle" && Date.now() - lastInteractionRef.current > AUTO_SLEEP_MS) {
+      if (actionRef.current === "idle" && Date.now() - lastInteractionRef.current > AUTO_SLEEP_MS) {
         dispatch({ type: "sleep" });
       }
     }, SLEEP_CHECK_MS);
@@ -226,9 +241,15 @@ export default function PetWindow() {
   // Click vs drag disambiguation (no data-tauri-drag-region — it eats clicks).
   const dragState = useRef<{ x: number; y: number; moved: boolean } | null>(null);
 
+  function finishDrag() {
+    const wasDragging = dragState.current?.moved || actionRef.current === "drag";
+    dragState.current = null;
+    if (wasDragging) dispatch({ type: "drag-end" });
+  }
+
   function noteInteraction() {
     lastInteractionRef.current = Date.now();
-    if (poseRef.current === "sleep") dispatch({ type: "wake" });
+    if (actionRef.current === "sleep") dispatch({ type: "wake" });
   }
 
   function onPointerDown(e: React.PointerEvent) {
@@ -244,16 +265,6 @@ export default function PetWindow() {
 
   function onPointerMove(e: React.PointerEvent) {
     if (settingsRef.current.locked) return;
-    const el = rootRef.current;
-    // Hover look (no button held): write normalized cursor pos as CSS vars.
-    if (el && e.buttons === 0) {
-      noteInteraction();
-      const r = el.getBoundingClientRect();
-      const nx = ((e.clientX - r.left) / r.width) * 2 - 1;
-      const ny = ((e.clientY - r.top) / r.height) * 2 - 1;
-      el.style.setProperty("--look-x", nx.toFixed(3));
-      el.style.setProperty("--look-y", ny.toFixed(3));
-    }
     // Drag detection (button held).
     const ds = dragState.current;
     if (!ds) return;
@@ -262,7 +273,8 @@ export default function PetWindow() {
       dispatch({ type: "drag-start" });
       getCurrentWindow()
         .startDragging()
-        .catch((err) => console.error("[bugzia] startDragging", err));
+        .catch((err) => console.error("[bugzia] startDragging", err))
+        .finally(finishDrag);
     }
   }
 
@@ -275,12 +287,12 @@ export default function PetWindow() {
       // Matching the best-effort capture above.
     }
     const ds = dragState.current;
-    dragState.current = null;
     if (!ds) return;
     if (ds.moved) {
-      dispatch({ type: "drag-end" });
+      finishDrag();
       return;
     }
+    dragState.current = null;
     if (!ds.moved) {
       const now = Date.now();
       const isDoubleClick = now - lastClickAtRef.current <= DOUBLE_CLICK_MS;
@@ -296,17 +308,19 @@ export default function PetWindow() {
   }
 
   function onPointerCancel() {
-    if (dragState.current?.moved) dispatch({ type: "drag-end" });
-    dragState.current = null;
+    finishDrag();
   }
 
-  const asset = pickPoseAsset(poseSrcs, failed, pose);
   const style = { "--scale": settings.scale } as CSSProperties;
+  const sheetStyle = {
+    width: `${actionSpec.frames * 100}%`,
+    transform: `translateX(-${(frame * 100) / actionSpec.frames}%)`,
+  } as CSSProperties;
 
   return (
     <div
       ref={rootRef}
-      className={`pet-root pet-pose-${pose}`}
+      className={`pet-root pet-action-${action}`}
       style={style}
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
@@ -315,19 +329,19 @@ export default function PetWindow() {
     >
       <div className="pet-bubble-layer">
         {bubble != null && <div className="pet-bubble">{bubble}</div>}
-        {pose === "sleep" && bubble == null && <div className="pet-snooze">Zzz</div>}
+        {action === "sleep" && bubble == null && <div className="pet-snooze">Zzz</div>}
       </div>
       <div className="pet-body-layer">
         <div className="pet-look">
-          {asset.src != null && (
+          <div className="pet-sprite-shell" aria-hidden="true">
             <img
-              className="pet-sprite"
-              src={asset.src}
+              className="pet-sprite-sheet"
+              src={actionSpec.src}
               alt=""
               draggable={false}
-              onError={() => setFailed((f) => ({ ...f, [asset.assetPose]: true }))}
+              style={sheetStyle}
             />
-          )}
+          </div>
         </div>
       </div>
     </div>

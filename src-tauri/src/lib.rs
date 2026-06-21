@@ -1,6 +1,7 @@
 mod ai;
 mod conversations;
 mod file_search;
+mod notes;
 mod settings;
 mod waveform;
 mod weather;
@@ -11,6 +12,7 @@ use conversations::{
     set_conversation_locked, upsert_conversation,
 };
 use file_search::{open_file, reveal_file, search_files};
+use notes::{notes_load, notes_save};
 use settings::{clear_api_key, load_api_key, load_settings, save_api_key, save_settings};
 
 use std::fs;
@@ -56,6 +58,18 @@ fn pet_set_locked(app: AppHandle, locked: bool) {
 #[tauri::command]
 fn pet_set_always_on_top(app: AppHandle, top: bool) {
     if let Some(win) = app.get_webview_window("pet") {
+        let _ = win.set_always_on_top(top);
+    }
+}
+
+/// Pin (or unpin) a desktop sticky-note window above every other window. Unlike
+/// the pet/waveform/result overlays (single instance, fixed label), notes are
+/// MULTI-INSTANCE with dynamic labels (`note-<id>`), so the target label is a
+/// parameter. Same ACL rationale: the note window's capability lacks
+/// `allow-set-always-on-top`, so the backend sets it regardless of caller ACL.
+#[tauri::command]
+fn note_set_always_on_top(app: AppHandle, label: String, top: bool) {
+    if let Some(win) = app.get_webview_window(&label) {
         let _ = win.set_always_on_top(top);
     }
 }
@@ -238,6 +252,9 @@ pub fn run() {
             pet_set_locked,
             pet_set_always_on_top,
             pet_assets_dir,
+            notes_load,
+            notes_save,
+            note_set_always_on_top,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

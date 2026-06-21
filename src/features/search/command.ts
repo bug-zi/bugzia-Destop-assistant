@@ -1,6 +1,6 @@
 import { openUrl } from "@tauri-apps/plugin-opener";
 
-export type CommandMode = "ai" | "web" | "file" | "weather" | "trans" | "help";
+export type CommandMode = "ai" | "web" | "file" | "weather" | "trans" | "note" | "help";
 
 export interface ParsedCommand {
   mode: CommandMode;
@@ -42,6 +42,7 @@ export const COMMANDS: CommandDef[] = [
   { mode: "ai", prefix: "/ai", description: "强制 AI 对话" },
   { mode: "weather", prefix: "/weather", aliases: ["/天气"], description: "查询城市天气" },
   { mode: "trans", prefix: "/trans", aliases: ["/翻译"], description: "翻译文本（中英自动互译）" },
+  { mode: "note", prefix: "/note", aliases: ["/便签", "/便笺"], description: "在桌面生成一张便笺" },
   { mode: "help", prefix: "/help", aliases: ["/?"], description: "查看所有命令" },
 ];
 

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { loadSettings } from "../features/settings/settingsStore";
 import type { AppSettings, WaveformSettings } from "../features/settings/settingsTypes";
 import "./WaveformWindow.css";
@@ -42,6 +43,10 @@ interface Petal {
 
 const rgb = (r: number, g: number, b: number) => `rgb(${r}, ${g}, ${b})`;
 
+/** Pointer must move this many CSS px before we treat it as a drag (not jitter)
+ *  and hand off to native window dragging. Mirrors the pet window's threshold. */
+const DRAG_THRESHOLD = 5;
+
 /** Pick a petal color: ~80% primary, ~20% accent highlight for sparkle. */
 function pickColor(s: WaveformSettings): string {
   return Math.random() < 0.8
@@ -65,6 +70,15 @@ export default function WaveformWindow() {
   const spawnAccumRef = useRef(0);
   const rafRef = useRef<number | null>(null);
   const lastTsRef = useRef(0);
+
+  // Manual drag state. The overlay does NOT use data-tauri-drag-region (that
+  // attribute conflicts with set_ignore_cursor_events on Windows, so the
+  // "lock = click-through" never took effect and a locked=true window stayed
+  // draggable at startup). Mirroring the pet window, we hand off to
+  // startDragging() on a pointer move past a small threshold; when locked we
+  // bail entirely and the backend click-through makes the surface pass clicks
+  // through to the desktop.
+  const dragState = useRef<{ x: number; y: number; moved: boolean } | null>(null);
 
   // Hydrate appearance on mount.
   useEffect(() => {
@@ -246,6 +260,43 @@ export default function WaveformWindow() {
     };
   }, []);
 
+  // ── manual dragging (replaces data-tauri-drag-region) ────────────────────
+  function onPointerDown(e: React.PointerEvent) {
+    if (settingsRef.current?.locked) return; // click-through handled by backend
+    try {
+      e.currentTarget.setPointerCapture(e.pointerId);
+    } catch {
+      // Pointer capture is best-effort; native dragging still works without it.
+    }
+    dragState.current = { x: e.clientX, y: e.clientY, moved: false };
+  }
+
+  function onPointerMove(e: React.PointerEvent) {
+    if (settingsRef.current?.locked) return;
+    const ds = dragState.current;
+    if (!ds) return;
+    if (!ds.moved && Math.hypot(e.clientX - ds.x, e.clientY - ds.y) > DRAG_THRESHOLD) {
+      ds.moved = true;
+      dragState.current = null;
+      getCurrentWindow()
+        .startDragging()
+        .catch((err) => console.error("[bugzia] waveform startDragging", err));
+    }
+  }
+
+  function onPointerUp(e: React.PointerEvent) {
+    try {
+      e.currentTarget.releasePointerCapture(e.pointerId);
+    } catch {
+      // Matching the best-effort capture in onPointerDown.
+    }
+    dragState.current = null;
+  }
+
+  function onPointerCancel() {
+    dragState.current = null;
+  }
+
   // IMPORTANT: do NOT early-return null before settings hydrate. The sizing +
   // rAF effects above have EMPTY deps and read canvasRef.current exactly once on
   // mount; if the <canvas> were absent on first commit (a `return null` here
@@ -256,7 +307,10 @@ export default function WaveformWindow() {
   return (
     <div
       className="waveform-root"
-      data-tauri-drag-region
+      onPointerDown={onPointerDown}
+      onPointerMove={onPointerMove}
+      onPointerUp={onPointerUp}
+      onPointerCancel={onPointerCancel}
       style={{ opacity: settings ? settings.opacity : 0 }}
     >
       <canvas ref={canvasRef} className="waveform-canvas" />

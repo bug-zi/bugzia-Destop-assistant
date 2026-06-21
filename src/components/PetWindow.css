@@ -1,8 +1,7 @@
 /* Desktop pet overlay. The window itself is transparent + borderless, so only
    the sprite (and optional speech bubble) is visible. The root fills the window
-   and carries the pointer handlers; .pet-look applies the look-toward-cursor
-   translate; .pet-sprite owns the breathing scale animation (two elements so the
-   two transforms never collide). */
+   and carries the pointer handlers; .pet-sprite-shell clips the sprite sheet to
+   one frame. */
 .pet-root {
   position: relative;
   width: 100vw;
@@ -13,11 +12,6 @@
   justify-content: center;
   background: transparent;
   cursor: grab;
-  --look-x: 0;
-  --look-y: 0;
-  --pose-rotate: 0deg;
-  --pose-y: 0px;
-  --pose-opacity: 1;
   --bubble-h: 60px;
 }
 .pet-root:active {
@@ -47,114 +41,33 @@
 }
 
 .pet-look {
-  transform: translate(
-      calc(var(--look-x) * 5px),
-      calc((var(--look-y) * 4px) + var(--pose-y))
-    )
-    rotate(var(--pose-rotate));
-  transition: transform 140ms ease-out;
-}
-
-.pet-sprite {
-  display: block;
+  height: calc(100vh - var(--bubble-h) - 4px);
+  max-height: 100%;
   max-width: calc(100vw - 8px);
-  width: auto;
-  height: auto;
-  max-height: calc((100vh - var(--bubble-h) - 4px) * var(--scale, 1));
+  aspect-ratio: 512 / 724;
+  transform: scale(var(--scale, 1));
+  transform-origin: bottom center;
+}
+
+.pet-sprite-shell {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
   user-select: none;
-  -webkit-user-drag: none;
   pointer-events: none;
-  animation: pet-breathe 3.4s ease-in-out infinite;
   filter: drop-shadow(0 6px 6px rgba(0, 0, 0, 0.28));
-  opacity: var(--pose-opacity);
 }
 
-.pet-pose-happy .pet-sprite {
-  animation: pet-breathe 3.4s ease-in-out infinite, pet-hop 0.8s ease-out;
+.pet-sprite-sheet {
+  display: block;
+  width: 600%;
+  height: 100%;
+  max-width: none;
+  -webkit-user-drag: none;
 }
 
-.pet-pose-surprise .pet-sprite {
-  animation: pet-breathe 3.4s ease-in-out infinite, pet-surprise 0.65s ease-out;
-}
-
-.pet-pose-drag {
-  --pose-rotate: -5deg;
-  --pose-y: -4px;
-}
-
-.pet-pose-drag .pet-sprite {
-  animation: pet-drag-sway 0.42s ease-in-out infinite alternate;
+.pet-action-drag .pet-sprite-shell {
   filter: drop-shadow(0 10px 9px rgba(0, 0, 0, 0.24));
-}
-
-.pet-pose-sleep {
-  --look-x: 0;
-  --look-y: 0;
-  --pose-rotate: 4deg;
-  --pose-y: 7px;
-  --pose-opacity: 0.92;
-}
-
-.pet-pose-sleep .pet-sprite {
-  animation: pet-sleep-breathe 4.8s ease-in-out infinite;
-}
-
-@keyframes pet-breathe {
-  0%,
-  100% {
-    transform: scale(1);
-  }
-  50% {
-    transform: scale(1.025);
-  }
-}
-
-@keyframes pet-hop {
-  0%,
-  100% {
-    transform: translateY(0) scale(1);
-  }
-  34% {
-    transform: translateY(-9px) scale(1.035);
-  }
-  62% {
-    transform: translateY(1px) scale(0.995);
-  }
-}
-
-@keyframes pet-surprise {
-  0%,
-  100% {
-    transform: translateY(0) scale(1);
-  }
-  22% {
-    transform: translateY(-7px) scale(1.05);
-  }
-  44% {
-    transform: translateY(0) scale(0.98);
-  }
-  66% {
-    transform: translateY(-3px) scale(1.02);
-  }
-}
-
-@keyframes pet-drag-sway {
-  from {
-    transform: rotate(-2deg) scale(1.01);
-  }
-  to {
-    transform: rotate(2deg) scale(1.01);
-  }
-}
-
-@keyframes pet-sleep-breathe {
-  0%,
-  100% {
-    transform: scale(0.985);
-  }
-  50% {
-    transform: scale(1.01);
-  }
 }
 
 .pet-bubble {

@@ -3,6 +3,7 @@ import type {
   AppSettings,
   AppearanceSettings,
   AiSettings,
+  NoteSettings,
   PetSettings,
   ResultAppearanceSettings,
   SearchSettings,
@@ -37,6 +38,8 @@ export default function SettingsPanel({ settings, onChange, onClose }: SettingsP
     onChange({ ...settings, waveform: { ...settings.waveform, ...p } });
   const patchPet = (p: Partial<PetSettings>) =>
     onChange({ ...settings, pet: { ...settings.pet, ...p } });
+  const patchNote = (p: Partial<NoteSettings>) =>
+    onChange({ ...settings, note: { ...settings.note, ...p } });
 
   // API key lives in the OS keyring, separate from the JSON settings, so it has
   // its own local state + explicit save.
@@ -141,6 +144,7 @@ export default function SettingsPanel({ settings, onChange, onClose }: SettingsP
   const ai = settings.ai;
   const wf = settings.waveform;
   const pet = settings.pet;
+  const n = settings.note;
 
   return (
     <div className="settings-overlay" onClick={onClose}>
@@ -435,6 +439,32 @@ export default function SettingsPanel({ settings, onChange, onClose }: SettingsP
               </div>
             </Field>
           </section>
+
+          {/* ── 便笺 ── */}
+          <section className="settings-section">
+            <h4>便笺</h4>
+            <ColorField label="底色"
+              r={n.bg_r} g={n.bg_g} b={n.bg_b}
+              presets={NOTE_BG_PRESETS}
+              onChange={(hex) => { const c = hexToRgb(hex); patchNote({ bg_r: c.r, bg_g: c.g, bg_b: c.b }); }} />
+            <ColorField label="字色"
+              r={n.text_r} g={n.text_g} b={n.text_b}
+              presets={NOTE_TEXT_PRESETS}
+              onChange={(hex) => { const c = hexToRgb(hex); patchNote({ text_r: c.r, text_g: c.g, text_b: c.b }); }} />
+            <ColorRow label="宽度" value={n.w} min={160} max={480} step={10}
+              fmt={(v) => `${v}px`} onChange={(v) => patchNote({ w: v })} />
+            <ColorRow label="高度" value={n.h} min={120} max={600} step={10}
+              fmt={(v) => `${v}px`} onChange={(v) => patchNote({ h: v })} />
+            <ColorRow label="圆角" value={n.radius} min={0} max={30} step={1}
+              fmt={(v) => `${v}px`} onChange={(v) => patchNote({ radius: v })} />
+            <ColorRow label="字号" value={n.font_size} min={10} max={28} step={1}
+              fmt={(v) => `${v}px`} onChange={(v) => patchNote({ font_size: v })} />
+            <ColorRow label="背景透明度" value={n.bg_alpha} min={0.1} max={1} step={0.01}
+              fmt={(v) => v.toFixed(2)} onChange={(v) => patchNote({ bg_alpha: v })} />
+            <ColorRow label="文字透明度" value={n.text_alpha} min={0.1} max={1} step={0.01}
+              fmt={(v) => v.toFixed(2)} onChange={(v) => patchNote({ text_alpha: v })} />
+            <div className="hint">作为新生成便笺的默认样式；已打开的便笺也会实时跟随变化。</div>
+          </section>
         </div>
       </div>
     </div>
@@ -480,14 +510,36 @@ function hexToRgb(hex: string): { r: number; g: number; b: number } {
  *  the native picker next to them selects any other color. Distinct hues so
  *  locked conversations read at a glance once tinted. */
 const LOCKED_COLOR_PRESETS = [
-  "#FFDE78", // 琥珀（默认）
-  "#FF8787", // 珊瑚红
+  "#FFDE78", // 琥珀
+  "#FF8787", // 珊瑚红（默认）
   "#FFA94D", // 橙
   "#69DB7C", // 绿
   "#38D9A9", // 青
   "#4DABF7", // 蓝
   "#9775FA", // 紫
   "#F783AC", // 粉
+];
+
+/** Preset swatches for the note background (default sakura deep red #9E1B32). */
+const NOTE_BG_PRESETS = [
+  "#C95877", // 玫粉（默认）
+  "#1F3A2E", // 墨绿
+  "#2C3E66", // 靛蓝
+  "#B7791F", // 琥珀
+  "#5B3A86", // 紫
+  "#4A4A4A", // 灰
+  "#1A1A1A", // 黑
+  "#F5F5F5", // 白
+];
+
+/** Preset swatches for the note text color. */
+const NOTE_TEXT_PRESETS = [
+  "#FFFFFF", // 白（默认）
+  "#F5F5F5", // 浅灰
+  "#FFE8A3", // 暖黄
+  "#FFD6E0", // 浅粉
+  "#1A1A1A", // 黑
+  "#9E1B32", // 深红
 ];
 
 /** Label + native color picker row (背景色 / 主色 / 高光 / 锁定卡片颜色). Reuses

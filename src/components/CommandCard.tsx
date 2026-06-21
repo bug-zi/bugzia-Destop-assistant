@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { LogicalPosition, LogicalSize } from "@tauri-apps/api/dpi";
-import { emit, listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { emit, emitTo, listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import InputBar from "./InputBar";
 import "./CommandCard.css";
@@ -11,6 +11,7 @@ import { listConversations, getConversation, upsertConversation, deriveTitle } f
 import { loadSettings, saveSettings } from "../features/settings/settingsStore";
 import { openSettingsWindow } from "../features/settings/settingsWindow";
 import { applyAppearanceVars } from "../features/appearance/appearance";
+import { DEFAULT_NOTE } from "../features/settings/settingsTypes";
 import type { AppSettings, PetSettings, WaveformSettings, WindowSettings, SettingsPatch } from "../features/settings/settingsTypes";
 import {
   hideResultWindow,
@@ -28,6 +29,23 @@ import {
   onPetGeometryChange,
   showPetWindow,
 } from "../features/pet/petWindow";
+import {
+  closeNoteWindow,
+  createNoteWindow,
+  onNoteGeometryChange,
+  setNoteAlwaysOnTop,
+} from "../features/note/noteWindow";
+import { notesLoad, notesSave } from "../features/note/notesStore";
+import {
+  NOTE_CHANGED,
+  NOTE_DESTROYED,
+  NOTE_HYDRATE,
+  NOTE_PINNED,
+  NOTE_READY,
+  NOTE_SETTINGS,
+  noteLabel,
+  type NoteRecord,
+} from "../features/note/noteTypes";
 import { EV, type FileResult, type ResultMode } from "../features/result/resultTypes";
 
 const COLLAPSED_H = 64;
@@ -111,6 +129,12 @@ export default function CommandCard() {
 
   const settingsRef = useRef<AppSettings | null>(null);
   const saveTimer = useRef<number | null>(null);
+
+  // Notes (multi-instance overlays). notesRef is the authoritative in-memory
+  // list (temp + pinned); only PINNED records are persisted to notes.json, so
+  // scheduleNotesSave filters to pinned===true.
+  const notesRef = useRef<NoteRecord[]>([]);
+  const notesSaveTimer = useRef<number | null>(null);
 
   /** Commit new settings to state + ref + debounced persistence. */
   const update = useCallback((next: AppSettings) => {
@@ -242,6 +266,26 @@ export default function CommandCard() {
     };
   }, []);
 
+  // ── restore pinned notes from notes.json (temp notes were cleared on exit).
+  //    Each pinned record recreates its window at its saved geometry + on-top. ──
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      const list = await notesLoad();
+      if (!alive) return;
+      notesRef.current = list;
+      const ns = settingsRef.current?.note ?? DEFAULT_NOTE;
+      for (const rec of list) {
+        await createNoteWindow(rec, { w: ns.w, h: ns.h }).catch(logErr("restore note"));
+        void setNoteAlwaysOnTop(rec.id, true).catch(logErr("note on_top"));
+      }
+    })();
+    return () => {
+      alive = false;
+      if (notesSaveTimer.current) clearTimeout(notesSaveTimer.current);
+    };
+  }, []);
+
   // ── live-apply appearance whenever it changes ──
   useEffect(() => {
     if (settings) applyAppearanceVars(settings.appearance);
@@ -304,6 +348,7 @@ export default function CommandCard() {
           window: { ...cur.window, locked: ev.payload.windowLocked },
           waveform: ev.payload.waveform ?? cur.waveform,
           pet: ev.payload.pet ?? cur.pet,
+          note: ev.payload.note ?? cur.note,
         };
         update(merged);
         applyAppearanceVars(merged.appearance);
@@ -618,6 +663,79 @@ export default function CommandCard() {
     });
   }, [update]);
 
+  // ── note overlay lifecycle (multi-instance) ──────────────────────────────
+  // Main is the sole notes.json writer: each note window is a thin view that
+  // hydrates on NOTE_READY, reports edits / pin / destroy up, and is positioned
+  // by the geometry listener below. Only PINNED notes are persisted.
+
+  // Hydrate a freshly-mounted note, then record edits / pin toggles / destroys.
+  useEffect(() => {
+    const offs: UnlistenFn[] = [];
+    (async () => {
+      offs.push(
+        await listen<{ id: string }>(NOTE_READY, (ev) => {
+          const rec = notesRef.current.find((n) => n.id === ev.payload.id);
+          const ns = settingsRef.current?.note ?? DEFAULT_NOTE;
+          emitTo(noteLabel(ev.payload.id), NOTE_HYDRATE, {
+            content: rec?.content ?? "",
+            settings: ns,
+          }).catch(logErr("note hydrate"));
+        }),
+      );
+      offs.push(
+        await listen<{ id: string; content: string }>(NOTE_CHANGED, (ev) => {
+          notesRef.current = notesRef.current.map((n) =>
+            n.id === ev.payload.id ? { ...n, content: ev.payload.content } : n,
+          );
+          scheduleNotesSave();
+        }),
+      );
+      offs.push(
+        await listen<{ id: string; pinned: boolean }>(NOTE_PINNED, (ev) => {
+          notesRef.current = notesRef.current.map((n) =>
+            n.id === ev.payload.id ? { ...n, pinned: ev.payload.pinned } : n,
+          );
+          void setNoteAlwaysOnTop(ev.payload.id, ev.payload.pinned).catch(logErr("note on_top"));
+          scheduleNotesSave();
+        }),
+      );
+      offs.push(
+        await listen<{ id: string }>(NOTE_DESTROYED, (ev) => {
+          notesRef.current = notesRef.current.filter((n) => n.id !== ev.payload.id);
+          void closeNoteWindow(ev.payload.id).catch(logErr("close note"));
+          scheduleNotesSave();
+        }),
+      );
+    })();
+    return () => offs.forEach((off) => off());
+  }, []);
+
+  // Persist a note's geometry when the USER moves/resizes it (pinned notes
+  // survive restart; temp notes keep in-memory geom only for the session).
+  useEffect(() => {
+    onNoteGeometryChange((id, patch) => {
+      notesRef.current = notesRef.current.map((n) =>
+        n.id === id
+          ? {
+              ...n,
+              ...(patch.x !== undefined ? { x: patch.x } : {}),
+              ...(patch.y !== undefined ? { y: patch.y } : {}),
+              ...(patch.w !== undefined ? { w: patch.w } : {}),
+              ...(patch.h !== undefined ? { h: patch.h } : {}),
+            }
+          : n,
+      );
+      scheduleNotesSave();
+    });
+  }, []);
+
+  // Forward live note style defaults (color / size / radius / font / opacity) to
+  // every open note whenever the section changes, so tweaks render next paint.
+  useEffect(() => {
+    if (!settings) return;
+    emit(NOTE_SETTINGS, settings.note).catch(logErr("emit note settings"));
+  }, [settings?.note]); // eslint-disable-line react-hooks/exhaustive-deps
+
   function resolveEngine(): SearchEngine {
     const s = settingsRef.current;
     if (s && s.search.custom_engine_url.trim()) {
@@ -759,6 +877,42 @@ export default function CommandCard() {
     }
   }
 
+  /** Spawn a fresh (temporary) note at the cascaded lower-right spot. The window
+   *  is always-on-top from the start (desktop overlay) and only persisted to
+   *  notes.json once the user pins it. Soft-capped at 50 open notes. */
+  async function spawnNote(text: string) {
+    if (notesRef.current.length >= 50) {
+      setStatusText("便笺已达上限（50）");
+      window.setTimeout(() => setStatusText(""), 1500);
+      return;
+    }
+    const s = settingsRef.current?.note ?? DEFAULT_NOTE;
+    const record: NoteRecord = {
+      id: crypto.randomUUID(),
+      content: text,
+      x: -1,
+      y: -1,
+      w: s.w,
+      h: s.h,
+      pinned: false,
+    };
+    notesRef.current = [...notesRef.current, record];
+    await createNoteWindow(record, { w: s.w, h: s.h }).catch(logErr("create note"));
+    void setNoteAlwaysOnTop(record.id, true).catch(logErr("note on_top"));
+    setStatusText("已生成便笺");
+    window.setTimeout(() => setStatusText(""), 1500);
+  }
+
+  /** Debounced persist of the PINNED subset only (temp notes live in memory and
+   *  vanish on app exit). Main is the sole notes.json writer. */
+  function scheduleNotesSave() {
+    if (notesSaveTimer.current) clearTimeout(notesSaveTimer.current);
+    notesSaveTimer.current = window.setTimeout(() => {
+      notesSaveTimer.current = null;
+      void notesSave(notesRef.current.filter((n) => n.pinned));
+    }, 400);
+  }
+
   async function handleSubmit(forceMode?: CommandMode) {
     const cmd = parseCommand(value);
     const mode = forceMode ?? cmd.mode;
@@ -769,6 +923,18 @@ export default function CommandCard() {
     if (mode === "help") {
       setValue("");
       void runAssistantOnce("命令列表", () => Promise.resolve(renderHelpMarkdown()), "生成中");
+      return;
+    }
+
+    if (mode === "note") {
+      const text = query.trim();
+      if (!text) {
+        setStatusText("请输入便笺内容");
+        window.setTimeout(() => setStatusText(""), 1500);
+        return;
+      }
+      setValue("");
+      void spawnNote(text);
       return;
     }
 

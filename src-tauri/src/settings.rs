@@ -38,13 +38,13 @@ pub struct AppearanceSettings {
 
 impl Default for AppearanceSettings {
     fn default() -> Self {
-        // Mirrors the original light-white glass theme in theme.css.
+        // Light rose-tinted glass theme (user-tuned): translucent + heavy blur.
         Self {
-            bg_r: 255,
-            bg_g: 255,
-            bg_b: 255,
-            bg_a: 0.34,
-            blur: 18.0,
+            bg_r: 254,
+            bg_g: 210,
+            bg_b: 210,
+            bg_a: 0.11,
+            blur: 40.0,
             radius: 12.0,
             font_scale: 1.0,
         }
@@ -98,17 +98,17 @@ pub struct ResultAppearanceSettings {
     pub locked_b: u8,
 }
 
-/// serde defaults for the locked-card tint RGB — the original amber (255,222,120),
-/// so a legacy settings.json predating this field stays visually unchanged
-/// instead of collapsing to black / wiping the whole result section.
+/// serde defaults for the locked-card tint RGB — coral (255,135,135), the
+/// user-tuned default tint, so a legacy settings.json missing this field loads
+/// the current default instead of collapsing to black / wiping the section.
 fn default_locked_r() -> u8 {
     255
 }
 fn default_locked_g() -> u8 {
-    222
+    135
 }
 fn default_locked_b() -> u8 {
-    120
+    135
 }
 
 /// serde default for `ResultAppearanceSettings::bg_r/g/b` — 255 (white), so a
@@ -128,7 +128,7 @@ impl Default for ResultAppearanceSettings {
             bg_r: default_result_bg(),
             bg_g: default_result_bg(),
             bg_b: default_result_bg(),
-            bg_a: 0.34,
+            bg_a: 0.11,
             radius: 12.0,
             blur: 18.0,
             font_scale: 1.0,
@@ -225,9 +225,9 @@ pub struct AiSettings {
 impl Default for AiSettings {
     fn default() -> Self {
         Self {
-            provider_name: String::new(),
-            base_url: String::new(),
-            model: String::new(),
+            provider_name: "vibe".to_string(),
+            base_url: "https://token.aiedulab.cn/v1".to_string(),
+            model: "gpt-5.5".to_string(),
             system_prompt: String::new(),
             temperature: 0.7,
             stream: true,
@@ -303,7 +303,7 @@ impl Default for SystemSettings {
 pub struct PetSettings {
     /// Master on/off for the overlay.
     pub enabled: bool,
-    /// Pin above all other windows (the pet should be visible by default).
+    /// Pin above all other windows.
     pub always_on_top: bool,
     /// Lock = mouse click-through (pointer reaches the desktop; the pet's own
     /// click/drag handlers stop firing — the expected behavior of "lock").
@@ -331,7 +331,7 @@ pub struct PetSettings {
 /// Desktop waveform visualizer settings. The overlay floats on the desktop and
 /// dances to whatever the system is playing (captured via WASAPI loopback). The
 /// whole section is `#[serde(default)]` on `AppSettings`, so a legacy
-/// settings.json (which predates this feature) loads the sakura-pink defaults
+/// settings.json (which predates this feature) loads the rose-pink defaults
 /// below instead of wiping. Manual `Default` keeps a fresh install visually
 /// correct rather than collapsing to 0/false.
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -352,11 +352,11 @@ pub struct WaveformSettings {
     pub petal_density: u32,
     /// Fall-speed multiplier.
     pub drift_speed: f32,
-    /// Primary petal color (default sakura pink #FFB7C5).
+    /// Primary petal color (default rose pink #FF5274).
     pub color_r: u8,
     pub color_g: u8,
     pub color_b: u8,
-    /// Highlight / water-line color (default white).
+    /// Highlight / water-line color (default light pink #FF9494).
     pub accent_r: u8,
     pub accent_g: u8,
     pub accent_b: u8,
@@ -385,8 +385,8 @@ fn default_pet_speech_lines() -> Vec<String> {
 impl Default for PetSettings {
     fn default() -> Self {
         Self {
-            enabled: false,
-            always_on_top: true,
+            enabled: true,
+            always_on_top: false,
             locked: false,
             scale: 1.0,
             blink_interval_ms: 4000,
@@ -404,24 +404,78 @@ impl Default for PetSettings {
 impl Default for WaveformSettings {
     fn default() -> Self {
         Self {
-            enabled: false,
+            enabled: true,
             always_on_top: false,
             locked: false,
             opacity: 0.95,
             sensitivity: 1.0,
-            petal_size: 14.0,
-            petal_density: 60,
-            drift_speed: 1.0,
+            petal_size: 4.0,
+            petal_density: 136,
+            drift_speed: 0.6,
             color_r: 255,
-            color_g: 183,
-            color_b: 197, // #FFB7C5 sakura pink
+            color_g: 82,
+            color_b: 116, // #FF5274 rose pink (user-tuned)
             accent_r: 255,
-            accent_g: 255,
-            accent_b: 255,
+            accent_g: 148,
+            accent_b: 148, // #FF9494 light pink highlight
             x: -1,
             y: -1,
             w: 380,
             h: 200,
+        }
+    }
+}
+
+/// Desktop sticky-note DEFAULTS (the `/note <content>` feature). Each note is a
+/// self-contained floating overlay; these are the style/size defaults applied to
+/// a freshly created note. Individual note content + geometry for PINNED notes
+/// lives in `notes.json` (user data, see `notes.rs`), NOT here — this section is
+/// purely preferences, mirroring how `WaveformSettings` holds visual defaults
+/// while per-instance state is separate. The whole section is `#[serde(default)]`
+/// on `AppSettings`, so a legacy settings.json (which predates this feature)
+/// loads the rose-pink defaults below instead of wiping. Manual `Default`
+/// keeps a fresh install visually correct rather than collapsing to 0/false.
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct NoteSettings {
+    /// Note background color (default rose pink #C95877).
+    pub bg_r: u8,
+    pub bg_g: u8,
+    pub bg_b: u8,
+    /// Note text color (default white).
+    pub text_r: u8,
+    pub text_g: u8,
+    pub text_b: u8,
+    /// Default note width in LOGICAL px (applied on creation; each note remembers
+    /// its own w/h in notes.json once the user resizes it).
+    pub w: u32,
+    /// Default note height in LOGICAL px.
+    pub h: u32,
+    /// Corner radius in px.
+    pub radius: f32,
+    /// Font size in px.
+    pub font_size: f32,
+    /// 0..1 BACKGROUND fill opacity (the note's translucent backing, independent
+    /// of text so the body can be see-through while text stays crisp).
+    pub bg_alpha: f32,
+    /// 0..1 TEXT opacity (applied to body text + textarea; independent of bg).
+    pub text_alpha: f32,
+}
+
+impl Default for NoteSettings {
+    fn default() -> Self {
+        Self {
+            bg_r: 201,
+            bg_g: 88,
+            bg_b: 119, // #C95877 rose pink (user-tuned)
+            text_r: 255,
+            text_g: 255,
+            text_b: 255, // white
+            w: 240,
+            h: 220,
+            radius: 10.0,
+            font_size: 14.0,
+            bg_alpha: 0.9,
+            text_alpha: 1.0,
         }
     }
 }
@@ -444,6 +498,8 @@ pub struct AppSettings {
     pub pet: PetSettings,
     #[serde(default)]
     pub waveform: WaveformSettings,
+    #[serde(default)]
+    pub note: NoteSettings,
 }
 
 // ---------------------------------------------------------------------------
@@ -539,13 +595,24 @@ mod tests {
     #[test]
     fn pet_settings_default_is_sensible() {
         let p = PetSettings::default();
-        assert!(!p.enabled);
-        assert!(p.always_on_top); // pet should be visible by default
+        assert!(p.enabled); // user-tuned default: pet on
+        assert!(!p.always_on_top); // user-tuned default: not pinned
         assert!(!p.locked); // interactive by default
         assert!((p.scale - 1.0).abs() < 1e-6);
         assert_eq!(p.x, -1);
         assert_eq!(p.y, -1); // -1 sentinel = never placed
         assert!(!p.speech_lines.is_empty());
+    }
+
+    #[test]
+    fn note_settings_default_is_rose_pink_white_text() {
+        let n = NoteSettings::default();
+        assert_eq!((n.bg_r, n.bg_g, n.bg_b), (201, 88, 119)); // #C95877
+        assert_eq!((n.text_r, n.text_g, n.text_b), (255, 255, 255)); // white
+        assert!(n.w > 0 && n.h > 0);
+        assert!(n.radius > 0.0 && n.font_size > 0.0);
+        assert!(n.bg_alpha > 0.0 && n.bg_alpha <= 1.0);
+        assert!(n.text_alpha > 0.0 && n.text_alpha <= 1.0);
     }
 
     #[test]
@@ -563,8 +630,8 @@ mod tests {
         let parsed: AppSettings = serde_json::from_value(legacy).unwrap();
         assert_eq!(parsed.appearance.bg_r, 10); // preserved
         assert!(!parsed.system.autostart); // preserved
-        assert!(!parsed.pet.enabled); // pet defaulted
-        assert!(parsed.pet.always_on_top);
+        assert!(parsed.pet.enabled); // pet defaulted (user-tuned default: on)
+        assert!(!parsed.pet.always_on_top); // user-tuned default: not pinned
     }
 
     /// Regression guard for the result-panel color-picker change: a legacy
@@ -601,12 +668,12 @@ mod tests {
 
     /// Regression guard for the locked-card tint: a legacy settings.json whose
     /// `result` section predates the `locked_r/g/b` fields must still
-    /// deserialize — with the tint defaulting to the original amber (255,222,120),
-    /// not failing and wiping the whole section. The field-level
+    /// deserialize — with the tint defaulting to the current default coral
+    /// (255,135,135), not failing and wiping the whole section. The field-level
     /// `#[serde(default = "default_locked_*")]` is what makes this work; remove
     /// it and this test fails, saving the user's other result-panel tuning.
     #[test]
-    fn legacy_result_without_locked_tint_loads_amber() {
+    fn legacy_result_without_locked_tint_loads_default() {
         let json = r#"{
             "result": {
                 "bg_r": 255, "bg_g": 255, "bg_b": 255, "bg_a": 0.34,
@@ -617,8 +684,8 @@ mod tests {
         }"#;
         let parsed: AppSettings = serde_json::from_str(json).unwrap();
         let r = parsed.result;
-        // tint defaulted to amber, not 0/black, not a full-section wipe:
-        assert_eq!((r.locked_r, r.locked_g, r.locked_b), (255, 222, 120));
+        // tint defaulted to coral, not 0/black, not a full-section wipe:
+        assert_eq!((r.locked_r, r.locked_g, r.locked_b), (255, 135, 135));
         // other fields preserved (proves it didn't fall back to Default::default
         // for the whole object — bg_a stays 0.34, not the struct's own 0.34 by
         // coincidence is indistinguishable, so check scrollbar_w == 8.0 too):
