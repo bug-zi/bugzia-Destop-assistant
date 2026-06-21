@@ -136,3 +136,26 @@
   border-color: rgba(0, 0, 0, 0.42);
   background: rgba(255, 255, 255, 0.78);
 }
+
+/* Drag-to-reorder states. .is-dragging fades the source; .is-drag-over marks
+ * the drop target with a top accent line. Native HTML5 DnD only — no library. */
+.history-item {
+  cursor: grab;
+}
+
+.history-item:active {
+  cursor: grabbing;
+}
+
+.history-item.is-dragging {
+  opacity: 0.4;
+}
+
+.history-item.is-drag-over {
+  box-shadow: inset 0 2px 0 rgba(0, 0, 0, 0.45);
+}
+
+/* While renaming, the row is an input field — grab cursor would mislead. */
+.history-item:has(.history-item-edit) {
+  cursor: default;
+}
