@@ -51,6 +51,12 @@ pub struct Conversation {
     /// turn). `#[serde(default)]` so an older conversations.json still loads.
     #[serde(default)]
     pub custom_title: Option<String>,
+    /// Manual sort order (smaller = higher in the list). Default 0 so an older
+    /// conversations.json still loads; list_conversations falls back to
+    /// updated_at desc when orders tie. New conversations get min(order) - 1
+    /// (-> land on top). reorder compacts to 0..n, converging negative drift.
+    #[serde(default)]
+    pub order: i64,
     pub messages: Vec<ConvMessage>,
 }
 
@@ -160,24 +166,23 @@ fn derive_title(title: &str, messages: &[ConvMessage]) -> String {
 }
 
 /// Enforce retention: keep ALL locked + the most recent DEFAULT_KEEP_RECENT
-/// unlocked (by updated_at desc). The conversation just upserted is the
-/// newest, so it always survives.
+/// unlocked (by updated_at desc). Display order now lives in list_conversations;
+/// this fn only filters, so retained conversations keep their order untouched.
 fn prune(convs: Vec<Conversation>) -> Vec<Conversation> {
-    let mut sorted = convs;
+    let mut by_recency = convs.clone();
     // Newest first by updated_at; ties broken by created_at.
-    sorted.sort_by(|a, b| b.updated_at.cmp(&a.updated_at).then(b.created_at.cmp(&a.created_at)));
-    let mut kept: Vec<Conversation> = Vec::new();
+    by_recency.sort_by(|a, b| b.updated_at.cmp(&a.updated_at).then(b.created_at.cmp(&a.created_at)));
+    let mut keep: std::collections::HashSet<String> = std::collections::HashSet::new();
     let mut unlocked_kept = 0usize;
-    for c in sorted {
+    for c in &by_recency {
         if c.locked {
-            kept.push(c);
+            keep.insert(c.id.clone());
         } else if unlocked_kept < DEFAULT_KEEP_RECENT {
-            kept.push(c);
+            keep.insert(c.id.clone());
             unlocked_kept += 1;
         }
-        // else: unlocked beyond the cap -> dropped
     }
-    kept
+    convs.into_iter().filter(|c| keep.contains(&c.id)).collect()
 }
 
 /// Mint a unique-ish id without a uuid crate dependency. Millisecond timestamp
@@ -195,7 +200,10 @@ fn mint_id() -> String {
 
 #[tauri::command]
 pub fn list_conversations(app: AppHandle) -> Result<Vec<ConvSummary>, String> {
-    let convs = load_all(&app)?;
+    let mut convs = load_all(&app)?;
+    // Manual order asc; ties (e.g. legacy data where all orders default to 0)
+    // fall back to updated_at desc, matching the pre-drag-sort behavior.
+    convs.sort_by(|a, b| a.order.cmp(&b.order).then(b.updated_at.cmp(&a.updated_at)));
     Ok(convs.iter().map(summarize).collect())
 }
 
@@ -241,6 +249,8 @@ pub fn upsert_conversation(
         c.updated_at = now;
         c.messages = messages;
     } else {
+        // Land on top: smallest order wins in list_conversations.
+        let min_order = convs.iter().map(|c| c.order).min().unwrap_or(0);
         convs.push(Conversation {
             id: id.clone(),
             title: derived_title,
@@ -249,6 +259,7 @@ pub fn upsert_conversation(
             locked: false,
             // No user rename yet — the auto-derived title is in effect.
             custom_title: None,
+            order: min_order - 1,
             messages,
         });
     }
