@@ -83,3 +83,12 @@ export function deriveTitle(messages: ChatMessage[]): string {
   }
   return "新对话";
 }
+
+/**
+ * Persist a new manual order. Pass the full conversation-id list in the
+ * desired top-to-bottom order. The backend reassigns each conversation's
+ * `order` to its index (0..n). Called from the history rail after a drag.
+ */
+export function reorderConversations(orderedIds: string[]): Promise<void> {
+  return invoke("reorder_conversations", { orderedIds });
+}
