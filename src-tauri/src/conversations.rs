@@ -322,3 +322,20 @@ pub fn rename_conversation(app: AppHandle, id: String, title: String) -> Result<
     }
     Ok(())
 }
+
+/// Persist a new manual order. ordered_ids is the full id list in the desired
+/// top-to-bottom order; each conversation's order is set to its index (0..n),
+/// so smaller order sorts first. Ids not in the list keep their current order
+/// (defensive — the frontend always sends the full list). Compacting to 0..n
+/// also periodically converges any negative drift from new-top inserts.
+#[tauri::command]
+pub fn reorder_conversations(app: AppHandle, ordered_ids: Vec<String>) -> Result<(), String> {
+    let mut convs = load_all(&app)?;
+    for (idx, id) in ordered_ids.iter().enumerate() {
+        if let Some(c) = convs.iter_mut().find(|c| &c.id == id) {
+            c.order = idx as i64;
+        }
+    }
+    save_all(&app, &convs)?;
+    Ok(())
+}

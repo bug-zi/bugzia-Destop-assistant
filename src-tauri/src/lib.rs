@@ -8,8 +8,8 @@ mod weather;
 
 use ai::{ask_once, ask_once_stream, chat, clear_context, get_messages, set_messages, stop_chat, test_ai_connection};
 use conversations::{
-    delete_conversation, get_conversation, list_conversations, rename_conversation,
-    set_conversation_locked, upsert_conversation,
+    delete_conversation, get_conversation, list_conversations, reorder_conversations,
+    rename_conversation, set_conversation_locked, upsert_conversation,
 };
 use file_search::{open_file, reveal_file, search_files};
 use notes::{notes_load, notes_save};
@@ -241,6 +241,7 @@ pub fn run() {
             set_conversation_locked,
             delete_conversation,
             rename_conversation,
+            reorder_conversations,
             search_files,
             open_file,
             reveal_file,
