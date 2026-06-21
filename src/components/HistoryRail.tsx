@@ -5,6 +5,7 @@ import {
   setConversationLocked,
   deleteConversation,
   renameConversation,
+  reorderConversations,
   type ConvSummary,
 } from "../features/conversations/conversations";
 import { EV } from "../features/result/resultTypes";
@@ -43,6 +44,10 @@ export default function HistoryRail() {
   /** Guards commitRename against a double-fire: Enter fires keydown, then the
    *  input unmounts and the focus loss fires blur — both would call commit. */
   const renamingIdRef = useRef<string | null>(null);
+  /** Index of the item being dragged, or null. */
+  const [dragIndex, setDragIndex] = useState<number | null>(null);
+  /** Index of the item the pointer is currently hovering over, or null. */
+  const [overIndex, setOverIndex] = useState<number | null>(null);
 
   const refresh = async () => {
     try {
@@ -121,6 +126,33 @@ export default function HistoryRail() {
     }
   };
 
+  /** Drop handler: splice the dragged item to the hover position (optimistic),
+   *  persist the full id order, and roll back on failure. Index is corrected
+   *  when dragging downward because removing the source shifts the target. */
+  const commitReorder = async () => {
+    if (dragIndex === null || overIndex === null || dragIndex === overIndex) {
+      setDragIndex(null);
+      setOverIndex(null);
+      return;
+    }
+    const next = [...items];
+    const [moved] = next.splice(dragIndex, 1);
+    const target = dragIndex < overIndex ? overIndex - 1 : overIndex;
+    next.splice(target, 0, moved);
+    setItems(next);
+    setDragIndex(null);
+    setOverIndex(null);
+    try {
+      await reorderConversations(next.map((c) => c.id));
+      // Sync any other open rails. Main ignores this ping (it only re-derives
+      // titles on its own upserts) — harmless either way.
+      emit(EV.HISTORY_CHANGED).catch(logErr("emit history-changed"));
+    } catch (e) {
+      logErr("reorder conversations")(e);
+      await refresh(); // Roll back to the backend's truth.
+    }
+  };
+
   const resume = (id: string) => {
     emit(EV.HISTORY_RESUME, { id }).catch(logErr("emit resume"));
   };
@@ -134,10 +166,34 @@ export default function HistoryRail() {
         ) : items.length === 0 ? (
           <div className="history-rail-empty">还没有历史对话</div>
         ) : (
-          items.map((c) => {
+          items.map((c, i) => {
             const editing = editingId === c.id;
+            const dragging = dragIndex === i;
+            const dragOver = overIndex === i && dragIndex !== null && dragIndex !== i;
             return (
-              <div key={c.id} className={"history-item" + (c.locked ? " is-locked" : "")}>
+              <div
+                key={c.id}
+                className={
+                  "history-item" +
+                  (c.locked ? " is-locked" : "") +
+                  (dragging ? " is-dragging" : "") +
+                  (dragOver ? " is-drag-over" : "")
+                }
+                draggable={!editing}
+                onDragStart={() => setDragIndex(i)}
+                onDragOver={(e) => {
+                  e.preventDefault(); // allow drop
+                  setOverIndex(i);
+                }}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  void commitReorder();
+                }}
+                onDragEnd={() => {
+                  setDragIndex(null);
+                  setOverIndex(null);
+                }}
+              >
                 {editing ? (
                   <input
                     className="history-item-edit"
