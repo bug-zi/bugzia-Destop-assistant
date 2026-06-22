@@ -96,6 +96,26 @@ pub struct ResultAppearanceSettings {
     pub locked_g: u8,
     #[serde(default = "default_locked_b")]
     pub locked_b: u8,
+    /// 0.0 - 1.0, locked-card overlay alpha. Replaces the former CSS-hardcoded
+    /// 0.22 so the locked tint strength is tunable alongside its hue.
+    #[serde(default = "default_locked_a")]
+    pub locked_a: f32,
+    /// Unlocked (resting) conversation-card tint, red channel. Applied as the
+    /// translucent background of `.history-item` (non-locked) in the history
+    /// rail, so the user can tune the resting card color separately from locked
+    /// ones. Field-level serde defaults keep a legacy settings.json (predating
+    /// these fields) loading at the original white (255) instead of collapsing
+    /// to 0 (black) / wiping the section.
+    #[serde(default = "default_unlocked_r")]
+    pub unlocked_r: u8,
+    #[serde(default = "default_unlocked_g")]
+    pub unlocked_g: u8,
+    #[serde(default = "default_unlocked_b")]
+    pub unlocked_b: u8,
+    /// 0.0 - 1.0, unlocked-card overlay alpha. Replaces the former
+    /// CSS-hardcoded 0.12 so the resting card strength is tunable.
+    #[serde(default = "default_unlocked_a")]
+    pub unlocked_a: f32,
 }
 
 /// serde defaults for the locked-card tint RGB — coral (255,135,135), the
@@ -109,6 +129,30 @@ fn default_locked_g() -> u8 {
 }
 fn default_locked_b() -> u8 {
     135
+}
+/// serde default for `ResultAppearanceSettings::locked_a` — 0.22, the former
+/// CSS-hardcoded locked-card overlay alpha, so a legacy settings.json missing
+/// this field loads at the same strength instead of collapsing to 0 (invisible)
+/// or wiping the section.
+fn default_locked_a() -> f32 {
+    0.22
+}
+/// serde defaults for the unlocked-card tint RGB — white (255), the former
+/// CSS-hardcoded resting card color, so a legacy settings.json missing these
+/// fields loads white instead of collapsing to 0 (black) / wiping the section.
+fn default_unlocked_r() -> u8 {
+    255
+}
+fn default_unlocked_g() -> u8 {
+    255
+}
+fn default_unlocked_b() -> u8 {
+    255
+}
+/// serde default for `ResultAppearanceSettings::unlocked_a` — 0.12, the former
+/// CSS-hardcoded resting-card overlay alpha.
+fn default_unlocked_a() -> f32 {
+    0.12
 }
 
 /// serde default for `ResultAppearanceSettings::bg_r/g/b` — 255 (white), so a
@@ -140,6 +184,11 @@ impl Default for ResultAppearanceSettings {
             locked_r: default_locked_r(),
             locked_g: default_locked_g(),
             locked_b: default_locked_b(),
+            locked_a: default_locked_a(),
+            unlocked_r: default_unlocked_r(),
+            unlocked_g: default_unlocked_g(),
+            unlocked_b: default_unlocked_b(),
+            unlocked_a: default_unlocked_a(),
         }
     }
 }
@@ -284,6 +333,10 @@ fn default_autostart() -> bool {
     true
 }
 
+fn default_true() -> bool {
+    true
+}
+
 impl Default for SystemSettings {
     fn default() -> Self {
         Self {
@@ -316,6 +369,18 @@ pub struct PetSettings {
     pub speech_enabled: bool,
     /// Idle random-speech interval, ms.
     pub speech_interval_ms: u32,
+    /// Whether the pet may ask the configured AI model for improvised short lines.
+    #[serde(default = "default_true")]
+    pub ai_speech_enabled: bool,
+    /// Minimum interval between idle AI improvised lines, ms.
+    #[serde(default = "default_pet_ai_idle_interval_ms")]
+    pub ai_idle_interval_ms: u32,
+    /// Minimum interval between interaction AI improvised lines, ms.
+    #[serde(default = "default_pet_ai_interaction_interval_ms")]
+    pub ai_interaction_interval_ms: u32,
+    /// Whether double-click opens the pet chat input.
+    #[serde(default = "default_true")]
+    pub chat_enabled: bool,
     /// Speech-bubble lines (one chosen at random). User-editable in Settings.
     #[serde(default = "default_pet_speech_lines")]
     pub speech_lines: Vec<String>,
@@ -382,6 +447,14 @@ fn default_pet_speech_lines() -> Vec<String> {
         .collect()
 }
 
+fn default_pet_ai_idle_interval_ms() -> u32 {
+    90000
+}
+
+fn default_pet_ai_interaction_interval_ms() -> u32 {
+    12000
+}
+
 impl Default for PetSettings {
     fn default() -> Self {
         Self {
@@ -392,6 +465,10 @@ impl Default for PetSettings {
             blink_interval_ms: 4000,
             speech_enabled: true,
             speech_interval_ms: 20000,
+            ai_speech_enabled: true,
+            ai_idle_interval_ms: default_pet_ai_idle_interval_ms(),
+            ai_interaction_interval_ms: default_pet_ai_interaction_interval_ms(),
+            chat_enabled: true,
             speech_lines: default_pet_speech_lines(),
             x: -1,
             y: -1,
@@ -480,6 +557,68 @@ impl Default for NoteSettings {
     }
 }
 
+/// "Agent notify" settings: a localhost HTTP endpoint that Claude Code / Codex
+/// POST lifecycle events to (turn complete / approval needed / errors); the pet
+/// overlay turns each into a bubble + pose. Decoupled from every other feature
+/// and OFF by default. The whole section is `#[serde(default)]` on AppSettings,
+/// so a legacy settings.json (which predates this feature) loads the defaults
+/// below instead of wiping. Manual `Default` keeps a fresh install correct.
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct AgentNotifySettings {
+    /// Master on/off. When false the receiver isn't started at all.
+    #[serde(default)]
+    pub enabled: bool,
+    /// Localhost port the receiver binds (127.0.0.1 only).
+    #[serde(default = "default_agent_notify_port")]
+    pub port: u16,
+    /// Optional shared secret; when set, callers must pass ?token=<this>.
+    #[serde(default)]
+    pub token: Option<String>,
+    /// Surface "turn complete / idle" events.
+    #[serde(default = "default_true")]
+    pub on_done: bool,
+    /// Surface "needs your approval" events.
+    #[serde(default = "default_true")]
+    pub on_needs: bool,
+    /// Surface agent errors.
+    #[serde(default = "default_true")]
+    pub on_error: bool,
+    /// Frontend per-kind cooldown (ms) so back-to-back turns don't spam bubbles.
+    #[serde(default = "default_agent_notify_cooldown_ms")]
+    pub cooldown_ms: u64,
+    /// When true, the bubble includes a short content snippet (privacy trade-off).
+    #[serde(default)]
+    pub show_content: bool,
+    /// When true, suppress notifications while a Bugzia window is focused (the
+    /// user is already looking at the app, no need to grab attention).
+    #[serde(default = "default_true")]
+    pub only_unfocused: bool,
+}
+
+fn default_agent_notify_port() -> u16 {
+    17890
+}
+
+fn default_agent_notify_cooldown_ms() -> u64 {
+    8000
+}
+
+impl Default for AgentNotifySettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            port: default_agent_notify_port(),
+            token: None,
+            on_done: true,
+            on_needs: true,
+            on_error: true,
+            cooldown_ms: default_agent_notify_cooldown_ms(),
+            show_content: false,
+            only_unfocused: true,
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
 pub struct AppSettings {
     #[serde(default)]
@@ -500,6 +639,8 @@ pub struct AppSettings {
     pub waveform: WaveformSettings,
     #[serde(default)]
     pub note: NoteSettings,
+    #[serde(default)]
+    pub agent_notify: AgentNotifySettings,
 }
 
 // ---------------------------------------------------------------------------
@@ -690,6 +831,37 @@ mod tests {
         // for the whole object — bg_a stays 0.34, not the struct's own 0.34 by
         // coincidence is indistinguishable, so check scrollbar_w == 8.0 too):
         assert_eq!(r.bg_a, 0.34);
+        assert_eq!(r.scrollbar_w, 8.0);
+    }
+
+    /// Regression guard for the per-state history-card alpha + unlocked tint: a
+    /// legacy settings.json whose `result` section predates `locked_a` and
+    /// `unlocked_r/g/b/a` must still deserialize — with each new field defaulting
+    /// to its former CSS-hardcoded value (locked_a 0.22, unlocked white @ 0.12),
+    /// not failing and wiping the whole section. The field-level
+    /// `#[serde(default = "default_*")]` is what makes this work; remove it and
+    /// this test fails, saving the user's other result-panel tuning.
+    #[test]
+    fn legacy_result_without_history_card_colors_loads_default() {
+        let json = r#"{
+            "result": {
+                "bg_r": 255, "bg_g": 255, "bg_b": 255, "bg_a": 0.34,
+                "radius": 12.0, "blur": 18.0, "font_scale": 1.0,
+                "row_gap": 6.0, "item_radius": 9.0, "row_pad": 6.0,
+                "hover_alpha": 0.72, "scrollbar_w": 8.0,
+                "locked_r": 10, "locked_g": 20, "locked_b": 30
+            }
+        }"#;
+        let parsed: AppSettings = serde_json::from_str(json).unwrap();
+        let r = parsed.result;
+        // locked RGB preserved from the file (proves no section wipe):
+        assert_eq!((r.locked_r, r.locked_g, r.locked_b), (10, 20, 30));
+        // locked_a defaulted to 0.22 (the former CSS-hardcoded value):
+        assert!((r.locked_a - 0.22).abs() < 1e-6);
+        // unlocked tint defaulted to white @ 0.12 (former CSS-hardcoded values):
+        assert_eq!((r.unlocked_r, r.unlocked_g, r.unlocked_b), (255, 255, 255));
+        assert!((r.unlocked_a - 0.12).abs() < 1e-6);
+        // other fields preserved:
         assert_eq!(r.scrollbar_w, 8.0);
     }
 }

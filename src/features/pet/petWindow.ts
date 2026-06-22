@@ -20,6 +20,8 @@
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { currentMonitor, getCurrentWindow } from "@tauri-apps/api/window";
 import { LogicalPosition, LogicalSize } from "@tauri-apps/api/dpi";
+import { invoke } from "@tauri-apps/api/core";
+import { loadSettings } from "../settings/settingsStore";
 
 const LABEL = "pet";
 const DEFAULT_W = 210;
@@ -152,8 +154,8 @@ async function defaultPlacement(w = DEFAULT_W, h = DEFAULT_H): Promise<void> {
 
 /** Ensure + place + reveal. If `saved` carries a user placement (x >= 0),
  *  restore that exact position + size; otherwise default to lower-right.
- *  Pin / click-through are applied separately from main via backend commands
- *  (`pet_set_always_on_top` / `pet_set_locked`). */
+ *  Click-through lock + always-on-top are re-applied as the LAST step of every
+ *  reveal from the persisted settings (see the note after `show()` below). */
 export async function showPetWindow(saved?: PetGeom): Promise<void> {
   const pet = await ensurePetWindow();
   if (saved && saved.x >= 0 && saved.y >= 0) {
@@ -176,6 +178,17 @@ export async function showPetWindow(saved?: PetGeom): Promise<void> {
   } catch (e) {
     console.error("[bugzia] show pet window", e);
   }
+  // Re-apply click-through lock + always-on-top as the LAST step of every
+  // reveal. On first open (x/y = -1 sentinel) BOTH the CommandCard enabled
+  // effect and the reset-position effect call showPetWindow, so show() runs
+  // twice and races; a later show() can reset ignore_cursor_events on Windows,
+  // un-doing a lock applied by the earlier call (the "lock fails on first
+  // open" bug). Applying these flags after EVERY show makes the saved state
+  // the last writer, so the lock always sticks regardless of how many shows
+  // race. Idempotent with the main window's effects; mirrored in showWaveformWindow.
+  const s = await loadSettings();
+  await invoke("pet_set_always_on_top", { top: s.pet.always_on_top }).catch(() => {});
+  await invoke("pet_set_locked", { locked: s.pet.locked }).catch(() => {});
 }
 
 /** Hide (not destroy) the pet window. Renderer state persists for next show. */

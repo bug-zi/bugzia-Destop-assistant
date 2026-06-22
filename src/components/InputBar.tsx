@@ -1,5 +1,6 @@
-import { useEffect, useRef } from "react";
-import type { CommandMode } from "../features/search/command";
+import { useEffect } from "react";
+import type { RefObject } from "react";
+import type { CommandMode, SlashPaletteItem } from "../features/search/command";
 import "./CommandCard.css";
 
 interface InputBarProps {
@@ -19,6 +20,23 @@ interface InputBarProps {
   onToggleResult: () => void;
   /** Whether the result overlay is currently open — drives the spark's active look. */
   resultOpen: boolean;
+  /** Filtered slash-command rows for the autocomplete palette (empty = closed). */
+  paletteItems: SlashPaletteItem[];
+  /** Highlighted row index (already clamped by the parent). */
+  paletteIndex: number;
+  /** Whether the palette is currently open. While true, the navigation keys are
+   *  routed to the palette instead of their normal input behavior. */
+  paletteOpen: boolean;
+  /** Move the highlight (ArrowUp / ArrowDown / hover). */
+  onPaletteIndexChange: (index: number) => void;
+  /** Accept a row: `enter` submits argless commands at once, otherwise fills the
+   *  trigger (+ trailing space); `tab` always fills without running. */
+  onPaletteAccept: (item: SlashPaletteItem, via: "enter" | "tab") => void;
+  /** Dismiss the palette without clearing the typed text (Escape). */
+  onPaletteDismiss: () => void;
+  /** The shared input element ref (owned by CommandCard). CommandCard refocuses
+   *  it after the palette overlay reveals, so the bar keeps keystroke focus. */
+  inputRef: RefObject<HTMLInputElement | null>;
 }
 
 function SparkIcon({ active }: { active: boolean }) {
@@ -68,9 +86,14 @@ export default function InputBar({
   onHideResult,
   onToggleResult,
   resultOpen,
+  paletteItems,
+  paletteIndex,
+  paletteOpen,
+  onPaletteIndexChange,
+  onPaletteAccept,
+  onPaletteDismiss,
+  inputRef,
 }: InputBarProps) {
-  const inputRef = useRef<HTMLInputElement>(null);
-
   // Ctrl+L focuses + selects the input from anywhere in the bar (plan §8).
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -113,6 +136,36 @@ export default function InputBar({
         spellCheck={false}
         onChange={(e) => onChange(e.currentTarget.value)}
         onKeyDown={(e) => {
+          // While the slash-palette is open, the navigation keys drive it and do
+          // NOT fall through to the normal input / result behaviors.
+          if (paletteOpen && paletteItems.length > 0) {
+            const len = paletteItems.length;
+            if (e.key === "ArrowDown") {
+              e.preventDefault();
+              onPaletteIndexChange((paletteIndex + 1) % len);
+              return;
+            }
+            if (e.key === "ArrowUp") {
+              e.preventDefault();
+              onPaletteIndexChange((paletteIndex - 1 + len) % len);
+              return;
+            }
+            if (e.key === "Enter") {
+              e.preventDefault();
+              onPaletteAccept(paletteItems[paletteIndex], "enter");
+              return;
+            }
+            if (e.key === "Tab") {
+              e.preventDefault();
+              onPaletteAccept(paletteItems[paletteIndex], "tab");
+              return;
+            }
+            if (e.key === "Escape") {
+              e.preventDefault();
+              onPaletteDismiss();
+              return;
+            }
+          }
           if (e.key === "Enter") {
             e.preventDefault();
             // Ctrl+Enter -> browser search, Alt+Enter -> file search, else

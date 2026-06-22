@@ -39,12 +39,18 @@ export function applyResultVars(res: ResultAppearanceSettings): void {
   el.setProperty("--bugzia-result-row-pad", `${res.row_pad}px`);
   el.setProperty("--bugzia-result-hover-alpha", String(res.hover_alpha));
   el.setProperty("--bugzia-result-scrollbar-w", `${res.scrollbar_w}px`);
-  // Locked conversation-card tint (history rail). Read as the RGB channels of a
-  // translucent overlay by .history-item.is-locked; alpha is fixed in the CSS so
-  // the tint strength stays consistent with the glass theme.
+  // History-rail conversation-card tints. Locked (`.is-locked`) and unlocked
+  // (`.history-item`) each read their own RGB + alpha; both alpha values now
+  // come from settings (locked_a / unlocked_a), replacing the former
+  // CSS-hardcoded 0.22 / 0.12.
   el.setProperty("--bugzia-result-locked-r", String(res.locked_r));
   el.setProperty("--bugzia-result-locked-g", String(res.locked_g));
   el.setProperty("--bugzia-result-locked-b", String(res.locked_b));
+  el.setProperty("--bugzia-result-locked-a", String(res.locked_a));
+  el.setProperty("--bugzia-result-unlocked-r", String(res.unlocked_r));
+  el.setProperty("--bugzia-result-unlocked-g", String(res.unlocked_g));
+  el.setProperty("--bugzia-result-unlocked-b", String(res.unlocked_b));
+  el.setProperty("--bugzia-result-unlocked-a", String(res.unlocked_a));
 }
 
 /** Load persisted settings and apply appearance to THIS window. */

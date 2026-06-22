@@ -1,0 +1,12 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "slashpalette",
+  "description": "Capability for the slash-command palette overlay window (pure mirror: emits pointer interaction back to main, listens for state)",
+  "windows": ["slashpalette"],
+  "permissions": [
+    "core:default",
+    "core:event:allow-listen",
+    "core:event:allow-emit",
+    "core:event:default"
+  ]
+}

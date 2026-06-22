@@ -58,6 +58,14 @@ export interface ResultAppearanceSettings {
   locked_r: number;
   locked_g: number;
   locked_b: number;
+  /** 0..1, locked-card overlay alpha (history rail `.is-locked`). */
+  locked_a: number;
+  /** Unlocked conversation-card tint R/G/B (history rail `.history-item`). */
+  unlocked_r: number;
+  unlocked_g: number;
+  unlocked_b: number;
+  /** 0..1, unlocked-card overlay alpha (history rail `.history-item`). */
+  unlocked_a: number;
 }
 
 export interface WindowSettings {
@@ -160,6 +168,10 @@ export interface PetSettings {
   blink_interval_ms: number;
   speech_enabled: boolean;
   speech_interval_ms: number;
+  ai_speech_enabled: boolean;
+  ai_idle_interval_ms: number;
+  ai_interaction_interval_ms: number;
+  chat_enabled: boolean;
   speech_lines: string[];
   /** -1 sentinel = never placed by the user. */
   x: number;
@@ -199,6 +211,34 @@ export interface NoteSettings {
   text_alpha: number;
 }
 
+/**
+ * "Agent notify" settings. Frontend mirror of Rust `AgentNotifySettings`
+ * (src-tauri/src/settings.rs); field names MUST match the serde JSON keys
+ * exactly. A localhost HTTP endpoint that Claude Code / Codex POST lifecycle
+ * events to (turn complete / approval needed / errors); the pet overlay turns
+ * each into a bubble + pose. OFF by default.
+ */
+export interface AgentNotifySettings {
+  /** Master on/off. When false the receiver isn't started at all. */
+  enabled: boolean;
+  /** Localhost port the receiver binds (127.0.0.1 only). */
+  port: number;
+  /** Optional shared secret; when set, callers must pass ?token=<this>. */
+  token: string | null;
+  /** Surface "turn complete / idle" events. */
+  on_done: boolean;
+  /** Surface "needs your approval" events. */
+  on_needs: boolean;
+  /** Surface agent errors. */
+  on_error: boolean;
+  /** Frontend per-kind cooldown (ms) so back-to-back turns don't spam bubbles. */
+  cooldown_ms: number;
+  /** When true, the bubble includes a short content snippet (privacy trade-off). */
+  show_content: boolean;
+  /** When true, suppress notifications while a Bugzia window is focused. */
+  only_unfocused: boolean;
+}
+
 export interface AppSettings {
   appearance: AppearanceSettings;
   result: ResultAppearanceSettings;
@@ -209,6 +249,7 @@ export interface AppSettings {
   waveform: WaveformSettings;
   pet: PetSettings;
   note: NoteSettings;
+  agent_notify: AgentNotifySettings;
 }
 
 export const DEFAULT_APPEARANCE: AppearanceSettings = {
@@ -237,6 +278,11 @@ export const DEFAULT_RESULT: ResultAppearanceSettings = {
   locked_r: 255,
   locked_g: 135,
   locked_b: 135,
+  locked_a: 0.22,
+  unlocked_r: 255,
+  unlocked_g: 255,
+  unlocked_b: 255,
+  unlocked_a: 0.12,
 };
 
 export const DEFAULT_WINDOW: WindowSettings = {
@@ -302,6 +348,10 @@ export const DEFAULT_PET: PetSettings = {
   blink_interval_ms: 4000,
   speech_enabled: true,
   speech_interval_ms: 20000,
+  ai_speech_enabled: true,
+  ai_idle_interval_ms: 90000,
+  ai_interaction_interval_ms: 12000,
+  chat_enabled: true,
   speech_lines: ["哼，终于想起我了？", "今天也要优雅一点。", "别乱点，我在看着你。", "做得不错。", "再陪我一会儿。"],
   x: -1,
   y: -1,
@@ -324,6 +374,18 @@ export const DEFAULT_NOTE: NoteSettings = {
   text_alpha: 1.0,
 };
 
+export const DEFAULT_AGENT_NOTIFY: AgentNotifySettings = {
+  enabled: false,
+  port: 17890,
+  token: null,
+  on_done: true,
+  on_needs: true,
+  on_error: true,
+  cooldown_ms: 8000,
+  show_content: false,
+  only_unfocused: true,
+};
+
 export const DEFAULT_SETTINGS: AppSettings = {
   appearance: DEFAULT_APPEARANCE,
   result: DEFAULT_RESULT,
@@ -334,6 +396,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   waveform: DEFAULT_WAVEFORM,
   pet: DEFAULT_PET,
   note: DEFAULT_NOTE,
+  agent_notify: DEFAULT_AGENT_NOTIFY,
 };
 
 /**
@@ -351,4 +414,5 @@ export interface SettingsPatch {
   waveform: WaveformSettings;
   pet: PetSettings;
   note: NoteSettings;
+  agent_notify: AgentNotifySettings;
 }

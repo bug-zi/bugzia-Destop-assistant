@@ -42,7 +42,12 @@
   display: flex;
   align-items: stretch;
   border-radius: var(--result-item-radius, 9px);
-  background: rgba(255, 255, 255, 0.12);
+  background: rgba(
+    var(--bugzia-result-unlocked-r, 255),
+    var(--bugzia-result-unlocked-g, 255),
+    var(--bugzia-result-unlocked-b, 255),
+    var(--bugzia-result-unlocked-a, 0.12)
+  );
   overflow: hidden;
 }
 
@@ -51,7 +56,7 @@
     var(--bugzia-result-locked-r, 255),
     var(--bugzia-result-locked-g, 222),
     var(--bugzia-result-locked-b, 120),
-    0.22
+    var(--bugzia-result-locked-a, 0.22)
   );
 }
 

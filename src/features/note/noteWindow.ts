@@ -77,36 +77,98 @@ async function placeAt(
   }
 }
 
-/** Monotonic cascade counter so successive new notes don't stack on the same
- *  spot. Wraps every 6 to avoid drifting off-screen. */
-let cascadeIndex = 0;
+/** Inset from the screen edge for the top-left anchor. Notes pack flush against
+ *  each other (no gap between them) but keep a small margin from the physical
+ *  screen edge so nothing clips at the corner. */
+const PLACE_MARGIN = 8;
 
-/** Default placement: LOWER-RIGHT with a per-note cascade offset (mirrors pet's
- *  default corner but spreads notes so multiple are visible at once). */
-async function cascadePlace(
-  win: WebviewWindow,
-  label: string,
+/** Logical-px rectangle of an existing note on screen, used to avoid overlap. */
+type NoteRect = { x: number; y: number; w: number; h: number };
+
+/** Greedy top-left shelf packer. Given the existing note rectangles, find the
+ *  topmost-then-leftmost spot for a w×h note that abuts existing notes (no gap)
+ *  and wraps to the next row when the current row is full — so notes line up
+ *  along the top-left and stack rightward without overlapping each other.
+ *
+ *  For each candidate row it slides the new note's left edge rightward, abutting
+ *  any note it would overlap, until it lands in a free gap; x strictly increases
+ *  each step so the loop always terminates. */
+function packTopLeft(
+  rects: NoteRect[],
   w: number,
   h: number,
+  waW: number,
+  waH: number,
+): { x: number; y: number } {
+  const left = PLACE_MARGIN;
+  const top = PLACE_MARGIN;
+  const right = waW - PLACE_MARGIN;
+  const bottom = waH - PLACE_MARGIN;
+  for (let rowTop = top; rowTop + h <= bottom; rowTop += h) {
+    const bandBottom = rowTop + h;
+    const inBand = rects.filter((r) => r.y < bandBottom && r.y + r.h > rowTop);
+    let x = left;
+    for (;;) {
+      const hit = inBand.find((r) => r.x < x + w && r.x + r.w > x);
+      if (!hit) break;
+      x = hit.x + hit.w; // flush against its right edge — no gap
+    }
+    if (x + w <= right) return { x, y: rowTop };
+  }
+  // Everything is full: clamp to the anchor rather than drifting off-screen.
+  return { x: left, y: top };
+}
+
+/** Default placement: TOP-LEFT, packing flush to the right of whatever notes are
+ *  already on screen (no gap between them). Reads live window geometry so
+ *  restored pinned notes and user-moved notes are respected, not just
+ *  same-session generations. */
+async function defaultPlace(
+  win: WebviewWindow,
+  label: string,
+  newId: string,
+  w: number,
+  h: number,
+  siblings: NoteRecord[],
 ): Promise<void> {
   const main = getCurrentWindow();
   const sf = await main.scaleFactor();
   const mon = await currentMonitor();
-  const waW = mon ? mon.size.width / sf : w * 6;
-  const waH = mon ? mon.size.height / sf : h * 6;
-  const step = 32;
-  const i = cascadeIndex % 6;
-  cascadeIndex += 1;
-  const x = Math.max(0, Math.round(waW - w - 24 - i * step));
-  const y = Math.max(0, Math.round(waH - h - 80 - i * step));
-  await placeAt(win, label, x, y, w, h);
+  const waW = mon ? mon.size.width / sf : w * 8;
+  const waH = mon ? mon.size.height / sf : h * 8;
+
+  const rects: NoteRect[] = [];
+  for (const sib of siblings) {
+    if (sib.id === newId) continue; // never pack against the note we're placing
+    const live = await WebviewWindow.getByLabel(noteLabel(sib.id));
+    let rect: NoteRect | null = null;
+    if (live) {
+      try {
+        const pos = await live.outerPosition();
+        const size = await live.outerSize();
+        rect = { x: pos.x / sf, y: pos.y / sf, w: size.width / sf, h: size.height / sf };
+      } catch {
+        rect = null; // window gone mid-loop — fall back to record geometry
+      }
+    }
+    if (!rect && sib.x >= 0 && sib.y >= 0) {
+      rect = { x: sib.x, y: sib.y, w: sib.w || w, h: sib.h || h };
+    }
+    if (rect) rects.push(rect);
+  }
+
+  const { x, y } = packTopLeft(rects, w, h, waW, waH);
+  await placeAt(win, label, Math.max(0, Math.round(x)), Math.max(0, Math.round(y)), w, h);
 }
 
-/** Create (if missing) + place + reveal a note window. A pinned note with saved
- *  geometry (x >= 0) restores its exact spot; a brand-new note cascades. */
+/** Create (if missing) + place + set layer + reveal a note window. A pinned note
+ *  with saved geometry (x >= 0) restores its exact spot; a brand-new note is
+ *  packed at the top-left, flush against any notes already on screen (siblings).
+ *  The z-order layer (pinned -> on top, else desktop) is applied before reveal. */
 export async function createNoteWindow(
   record: NoteRecord,
   defaults: { w: number; h: number },
+  siblings: NoteRecord[] = [],
 ): Promise<WebviewWindow> {
   const label = noteLabel(record.id);
   const w = Math.max(MIN_W, record.w || defaults.w);
@@ -141,8 +203,12 @@ export async function createNoteWindow(
   if (record.x >= 0 && record.y >= 0) {
     await placeAt(win, label, record.x, record.y, w, h);
   } else {
-    await cascadePlace(win, label, w, h);
+    await defaultPlace(win, label, record.id, w, h, siblings);
   }
+
+  // Set the z-order layer BEFORE reveal so an unpinned note never flashes over
+  // open apps — it appears already at the desktop layer (pinned -> on top).
+  await setNoteLayer(record.id, record.pinned);
 
   try {
     await win.show();
@@ -165,11 +231,13 @@ export async function closeNoteWindow(id: string): Promise<void> {
   }
 }
 
-/** Pin (or unpin) a note above every other window (backend command, by label). */
-export async function setNoteAlwaysOnTop(id: string, top: boolean): Promise<void> {
+/** Set a note's layer from its pinned state (backend command, by label).
+ *  Pinned -> always on top; unpinned -> desktop layer (always on bottom) so app
+ *  windows cover it instead of it floating over them. */
+export async function setNoteLayer(id: string, pinned: boolean): Promise<void> {
   try {
-    await invoke("note_set_always_on_top", { label: noteLabel(id), top });
+    await invoke("note_set_layer", { label: noteLabel(id), pinned });
   } catch (e) {
-    console.error("[bugzia] note on_top", e);
+    console.error("[bugzia] note set_layer", e);
   }
 }

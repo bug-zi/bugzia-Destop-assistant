@@ -37,4 +37,12 @@ futures-util = "0.3"
 # We build an INPUT stream on the DEFAULT OUTPUT device; cpal's WASAPI backend
 # opens a render endpoint in loopback mode, handing us whatever the speakers play.
 cpal = "0.15"
+# Send dragged files to the OS recycle bin ("the pet eats files"). Windows uses
+# IFileOperation -> reversible, NOT a permanent delete.
+trash = "5"
+# Localhost HTTP receiver for the "agent notify" feature: Claude Code / Codex
+# hooks POST turn-complete / approval-needed events so the pet can alert the
+# user. tiny_http is synchronous + thread-per-connection, so it runs in a
+# dedicated std::thread without pulling an async runtime into the app.
+tiny_http = "0.12"
 

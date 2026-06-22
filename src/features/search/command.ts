@@ -34,6 +34,10 @@ export interface CommandDef {
   description: string;
   /** Hidden from `/help` (still parsed). */
   hidden?: boolean;
+  /** True if the command runs with NO argument (e.g. `/help`). The slash-palette
+   *  uses this so Enter on an argless item submits immediately, while arg-taking
+   *  commands are filled as `<trigger> ` for the user to type the query. */
+  argless?: boolean;
 }
 
 export const COMMANDS: CommandDef[] = [
@@ -43,7 +47,7 @@ export const COMMANDS: CommandDef[] = [
   { mode: "weather", prefix: "/weather", aliases: ["/天气"], description: "查询城市天气" },
   { mode: "trans", prefix: "/trans", aliases: ["/翻译"], description: "翻译文本（中英自动互译）" },
   { mode: "note", prefix: "/note", aliases: ["/便签", "/便笺"], description: "在桌面生成一张便笺" },
-  { mode: "help", prefix: "/help", aliases: ["/?"], description: "查看所有命令" },
+  { mode: "help", prefix: "/help", aliases: ["/?"], description: "查看所有命令", argless: true },
 ];
 
 /** Built-in engines per spec §3.2. Default engine is configurable later via Settings. */
@@ -122,4 +126,48 @@ export async function browserSearch(
   const q = query.trim();
   if (!q) return;
   await openUrl(engine.url(q));
+}
+
+/** One row in the slash-command palette. `argless` mirrors `CommandDef.argless`. */
+export interface SlashPaletteItem {
+  trigger: string;
+  mode: CommandMode;
+  description: string;
+  argless: boolean;
+}
+
+/**
+ * Build the palette's filtered item list for a raw input string. Rules:
+ *   - only when the input starts with "/" and has NO space yet (the command
+ *     token is still being typed; once a space is present the command is chosen
+ *     and the palette steps aside);
+ *   - a trigger (prefix or alias) matches when it starts with the typed text,
+ *     case-insensitively, so "/W" still finds "/web";
+ *   - only slash-style triggers are surfaced (the "?" alias is a convenience
+ *     shortcut, not a slash command, so it never appears here);
+ *   - order follows COMMANDS (stable), so the palette's arrangement is fixed.
+ *
+ * Returns an empty array whenever the input does not qualify, which the caller
+ * treats as "palette closed".
+ */
+export function slashPaletteItems(input: string): SlashPaletteItem[] {
+  const v = input.trim().toLowerCase();
+  if (!v.startsWith("/") || v.includes(" ")) return [];
+  const out: SlashPaletteItem[] = [];
+  for (const c of COMMANDS) {
+    const triggers = [c.prefix, ...(c.aliases ?? [])].filter(
+      (t): t is string => !!t && t.startsWith("/"),
+    );
+    for (const trigger of triggers) {
+      if (trigger.toLowerCase().startsWith(v)) {
+        out.push({
+          trigger,
+          mode: c.mode,
+          description: c.description,
+          argless: !!c.argless,
+        });
+      }
+    }
+  }
+  return out;
 }

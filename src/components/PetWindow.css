@@ -12,7 +12,12 @@
   justify-content: center;
   background: transparent;
   cursor: grab;
-  --bubble-h: 60px;
+  --bubble-h: 76px;
+  --bubble-bg: rgba(255, 255, 255, 0.94);
+  --bubble-fg: #5a3b46;
+  --bubble-border: rgba(90, 59, 70, 0.12);
+  --bubble-shadow: 0 4px 10px rgba(0, 0, 0, 0.18);
+  --sprite-shadow: drop-shadow(0 6px 6px rgba(0, 0, 0, 0.28));
 }
 .pet-root:active {
   cursor: grabbing;
@@ -30,6 +35,85 @@
   pointer-events: none;
 }
 
+.pet-chat {
+  position: absolute;
+  z-index: 5;
+  left: 6px;
+  right: 6px;
+  bottom: 4px;
+  pointer-events: auto;
+  animation: pet-pop 0.18s ease-out;
+}
+
+.pet-chat-cancel {
+  position: absolute;
+  top: 50%;
+  right: 7px;
+  width: 22px;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 1px solid rgba(132, 47, 80, 0.2);
+  border-radius: 50%;
+  color: rgba(90, 45, 62, 0.72);
+  background: rgba(255, 255, 255, 0.72);
+  box-shadow: 0 2px 6px rgba(65, 28, 43, 0.12);
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+  transform: translateY(-50%);
+}
+
+.pet-chat-cancel:hover {
+  color: #7a263f;
+  background: rgba(255, 247, 250, 0.96);
+  border-color: rgba(181, 47, 89, 0.36);
+}
+
+.pet-chat-input {
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 34px;
+  border: 1px solid rgba(132, 47, 80, 0.24);
+  border-radius: 11px;
+  padding: 8px 36px 8px 10px;
+  color: #432330;
+  background: linear-gradient(180deg, rgba(255, 252, 254, 0.98), rgba(255, 244, 248, 0.96));
+  box-shadow:
+    0 8px 18px rgba(65, 28, 43, 0.2),
+    inset 0 1px 0 rgba(255, 255, 255, 0.9);
+  outline: none;
+  font-size: 13px;
+  line-height: 1.25;
+  caret-color: #b52f59;
+  transition:
+    border-color 0.16s ease,
+    box-shadow 0.16s ease,
+    transform 0.16s ease;
+}
+
+.pet-chat-input:focus {
+  border-color: rgba(181, 47, 89, 0.58);
+  box-shadow:
+    0 9px 20px rgba(181, 47, 89, 0.24),
+    0 0 0 2px rgba(255, 146, 174, 0.14),
+    inset 0 1px 0 rgba(255, 255, 255, 0.95);
+  transform: translateY(-1px);
+}
+
+.pet-chat-input:disabled {
+  color: rgba(67, 35, 48, 0.56);
+  cursor: wait;
+  background: rgba(249, 243, 247, 0.92);
+  box-shadow: 0 5px 12px rgba(65, 28, 43, 0.14);
+}
+
+.pet-chat-input::placeholder {
+  color: rgba(112, 61, 80, 0.62);
+}
+
 .pet-body-layer {
   width: 100%;
   height: calc(100vh - var(--bubble-h));
@@ -41,6 +125,7 @@
 }
 
 .pet-look {
+  position: relative;
   height: calc(100vh - var(--bubble-h) - 4px);
   max-height: 100%;
   max-width: calc(100vw - 8px);
@@ -55,7 +140,7 @@
   overflow: hidden;
   user-select: none;
   pointer-events: none;
-  filter: drop-shadow(0 6px 6px rgba(0, 0, 0, 0.28));
+  filter: var(--sprite-shadow);
 }
 
 .pet-sprite-sheet {
@@ -73,15 +158,122 @@
 .pet-bubble {
   position: relative;
   z-index: 2;
-  background: rgba(255, 255, 255, 0.94);
-  color: #5a3b46;
-  padding: 6px 12px;
+  box-sizing: border-box;
+  max-width: calc(100vw - 16px);
+  max-height: calc(var(--bubble-h) - 8px);
+  background: var(--bubble-bg);
+  color: var(--bubble-fg);
+  border: 1px solid var(--bubble-border);
+  padding: 7px 11px;
   border-radius: 12px;
   font-size: 14px;
-  white-space: nowrap;
-  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.18);
+  line-height: 1.25;
+  text-align: center;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  overflow: hidden;
+  box-shadow: var(--bubble-shadow);
   animation: pet-pop 0.25s ease-out;
   pointer-events: none;
+}
+
+.pet-mood-pleased {
+  --bubble-bg: rgba(255, 247, 250, 0.96);
+  --bubble-fg: #713246;
+  --bubble-border: rgba(255, 82, 116, 0.28);
+  --bubble-shadow: 0 5px 12px rgba(255, 82, 116, 0.2);
+  --sprite-shadow: drop-shadow(0 0 8px rgba(255, 128, 156, 0.32))
+    drop-shadow(0 6px 6px rgba(0, 0, 0, 0.24));
+  --expression-bg: rgba(255, 247, 250, 0.92);
+  --expression-fg: #c2355d;
+  --expression-border: rgba(255, 82, 116, 0.28);
+}
+
+.pet-mood-annoyed {
+  --bubble-bg: rgba(255, 242, 244, 0.97);
+  --bubble-fg: #762838;
+  --bubble-border: rgba(195, 37, 64, 0.32);
+  --bubble-shadow: 0 5px 12px rgba(195, 37, 64, 0.22);
+  --sprite-shadow: drop-shadow(0 0 7px rgba(195, 37, 64, 0.34))
+    drop-shadow(0 8px 7px rgba(0, 0, 0, 0.26));
+  --expression-bg: rgba(255, 242, 244, 0.95);
+  --expression-fg: #c32540;
+  --expression-border: rgba(195, 37, 64, 0.34);
+}
+
+.pet-mood-curious {
+  --bubble-bg: rgba(250, 246, 255, 0.96);
+  --bubble-fg: #50365f;
+  --bubble-border: rgba(142, 92, 190, 0.26);
+  --bubble-shadow: 0 5px 12px rgba(142, 92, 190, 0.18);
+  --sprite-shadow: drop-shadow(0 0 8px rgba(142, 92, 190, 0.28))
+    drop-shadow(0 6px 6px rgba(0, 0, 0, 0.24));
+  --expression-bg: rgba(250, 246, 255, 0.92);
+  --expression-fg: #6a3f90;
+  --expression-border: rgba(142, 92, 190, 0.3);
+}
+
+.pet-mood-sleepy {
+  --bubble-bg: rgba(246, 247, 252, 0.9);
+  --bubble-fg: rgba(79, 72, 91, 0.82);
+  --bubble-border: rgba(79, 72, 91, 0.14);
+  --bubble-shadow: 0 4px 9px rgba(35, 35, 45, 0.12);
+  --sprite-shadow: drop-shadow(0 5px 5px rgba(0, 0, 0, 0.18));
+  --expression-bg: rgba(246, 247, 252, 0.88);
+  --expression-fg: rgba(79, 72, 91, 0.76);
+  --expression-border: rgba(79, 72, 91, 0.14);
+}
+
+.pet-mood-sleepy .pet-sprite-shell {
+  opacity: 0.88;
+}
+
+.pet-mood-protective {
+  --bubble-bg: rgba(112, 22, 49, 0.94);
+  --bubble-fg: #fff7fa;
+  --bubble-border: rgba(255, 180, 200, 0.36);
+  --bubble-shadow: 0 6px 14px rgba(112, 22, 49, 0.3);
+  --sprite-shadow: drop-shadow(0 0 9px rgba(112, 22, 49, 0.36))
+    drop-shadow(0 7px 7px rgba(0, 0, 0, 0.28));
+  --expression-bg: rgba(112, 22, 49, 0.9);
+  --expression-fg: #fff7fa;
+  --expression-border: rgba(255, 180, 200, 0.36);
+}
+
+.pet-mood-mocking {
+  --bubble-bg: rgba(248, 246, 250, 0.96);
+  --bubble-fg: #47384d;
+  --bubble-border: rgba(88, 68, 96, 0.2);
+  --bubble-shadow: 0 5px 12px rgba(48, 38, 56, 0.16);
+  --sprite-shadow: drop-shadow(0 0 7px rgba(88, 68, 96, 0.24))
+    drop-shadow(0 7px 6px rgba(0, 0, 0, 0.24));
+  --expression-bg: rgba(248, 246, 250, 0.92);
+  --expression-fg: #584460;
+  --expression-border: rgba(88, 68, 96, 0.22);
+}
+
+.pet-expression {
+  position: absolute;
+  z-index: 4;
+  top: 10%;
+  right: 11%;
+  min-width: 24px;
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 6px;
+  box-sizing: border-box;
+  border: 1px solid var(--expression-border, rgba(90, 59, 70, 0.16));
+  border-radius: 999px;
+  color: var(--expression-fg, #713246);
+  background: var(--expression-bg, rgba(255, 255, 255, 0.9));
+  box-shadow: 0 4px 10px rgba(35, 20, 28, 0.18);
+  font-size: 13px;
+  font-weight: 800;
+  line-height: 1;
+  pointer-events: none;
+  animation: pet-expression-pop 1.2s ease-in-out infinite;
 }
 
 .pet-snooze {
@@ -107,6 +299,16 @@
   }
 }
 
+@keyframes pet-expression-pop {
+  0%,
+  100% {
+    transform: translateY(0) scale(1);
+  }
+  45% {
+    transform: translateY(-4px) scale(1.08);
+  }
+}
+
 @keyframes pet-snooze {
   0% {
     opacity: 0;
@@ -119,4 +321,12 @@
     opacity: 0;
     transform: translateY(-12px) scale(1.06);
   }
+}
+
+/* File drag-over: the pet glows sakura-pink (#FF5274, the waveform petal color)
+   to signal she's a valid drop target — "she'll eat what you drop here". Higher
+   specificity than .pet-action-drag so it wins even mid-drag. */
+.pet-root.pet-dragover .pet-sprite-shell {
+  filter: drop-shadow(0 0 12px rgba(255, 82, 116, 0.6))
+    drop-shadow(0 6px 6px rgba(0, 0, 0, 0.28));
 }

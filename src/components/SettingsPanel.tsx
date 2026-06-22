@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import type {
+  AgentNotifySettings,
   AppSettings,
   AppearanceSettings,
   AiSettings,
@@ -40,6 +41,8 @@ export default function SettingsPanel({ settings, onChange, onClose }: SettingsP
     onChange({ ...settings, pet: { ...settings.pet, ...p } });
   const patchNote = (p: Partial<NoteSettings>) =>
     onChange({ ...settings, note: { ...settings.note, ...p } });
+  const patchAgentNotify = (p: Partial<AgentNotifySettings>) =>
+    onChange({ ...settings, agent_notify: { ...settings.agent_notify, ...p } });
 
   // API key lives in the OS keyring, separate from the JSON settings, so it has
   // its own local state + explicit save.
@@ -145,6 +148,7 @@ export default function SettingsPanel({ settings, onChange, onClose }: SettingsP
   const wf = settings.waveform;
   const pet = settings.pet;
   const n = settings.note;
+  const an = settings.agent_notify;
 
   return (
     <div className="settings-overlay" onClick={onClose}>
@@ -217,11 +221,19 @@ export default function SettingsPanel({ settings, onChange, onClose }: SettingsP
               fmt={(v) => v.toFixed(2)} onChange={(v) => patchResult({ hover_alpha: v })} />
             <ColorRow label="滚动条宽度" value={r.scrollbar_w} min={4} max={14} step={1}
               fmt={(v) => `${v}px`} onChange={(v) => patchResult({ scrollbar_w: v })} />
+            <ColorField label="非锁定卡片颜色"
+              r={r.unlocked_r} g={r.unlocked_g} b={r.unlocked_b}
+              presets={UNLOCKED_COLOR_PRESETS}
+              onChange={(hex) => { const c = hexToRgb(hex); patchResult({ unlocked_r: c.r, unlocked_g: c.g, unlocked_b: c.b }); }} />
+            <ColorRow label="非锁定透明度" value={r.unlocked_a} min={0} max={0.8} step={0.01}
+              fmt={(v) => v.toFixed(2)} onChange={(v) => patchResult({ unlocked_a: v })} />
             <ColorField label="锁定卡片颜色"
               r={r.locked_r} g={r.locked_g} b={r.locked_b}
               presets={LOCKED_COLOR_PRESETS}
               onChange={(hex) => { const c = hexToRgb(hex); patchResult({ locked_r: c.r, locked_g: c.g, locked_b: c.b }); }} />
-            <div className="hint">作用于历史对话里已锁定的卡片（半透明叠加，替换默认琥珀色）。点预设色块或用取色盘自选。</div>
+            <ColorRow label="锁定透明度" value={r.locked_a} min={0} max={0.8} step={0.01}
+              fmt={(v) => v.toFixed(2)} onChange={(v) => patchResult({ locked_a: v })} />
+            <div className="hint">作用于历史对话侧栏的卡片：未锁定与已锁定各自可调颜色和透明度（半透明叠加）。点预设色块或用取色盘自选。</div>
           </section>
 
           {/* ── 桌面波形 ── */}
@@ -405,6 +417,26 @@ export default function SettingsPanel({ settings, onChange, onClose }: SettingsP
             </label>
             <ColorRow label="说话间隔" value={pet.speech_interval_ms} min={5000} max={60000} step={1000}
               fmt={(v) => `${(v / 1000).toFixed(0)}s`} onChange={(v) => patchPet({ speech_interval_ms: v })} />
+            <label className="check-row">
+              <input
+                type="checkbox"
+                checked={pet.ai_speech_enabled}
+                onChange={(e) => patchPet({ ai_speech_enabled: e.target.checked })}
+              />
+              AI 即兴说话
+            </label>
+            <ColorRow label="闲置 AI 间隔" value={pet.ai_idle_interval_ms} min={30000} max={300000} step={5000}
+              fmt={(v) => `${(v / 1000).toFixed(0)}s`} onChange={(v) => patchPet({ ai_idle_interval_ms: v })} />
+            <ColorRow label="互动 AI 间隔" value={pet.ai_interaction_interval_ms} min={0} max={60000} step={1000}
+              fmt={(v) => `${(v / 1000).toFixed(0)}s`} onChange={(v) => patchPet({ ai_interaction_interval_ms: v })} />
+            <label className="check-row">
+              <input
+                type="checkbox"
+                checked={pet.chat_enabled}
+                onChange={(e) => patchPet({ chat_enabled: e.target.checked })}
+              />
+              双击对话输入
+            </label>
             <Field label="口癖（每行一条）">
               <textarea
                 className="f-input"
@@ -465,6 +497,87 @@ export default function SettingsPanel({ settings, onChange, onClose }: SettingsP
               fmt={(v) => v.toFixed(2)} onChange={(v) => patchNote({ text_alpha: v })} />
             <div className="hint">作为新生成便笺的默认样式；已打开的便笺也会实时跟随变化。</div>
           </section>
+
+          {/* ── Agent 通知 ── */}
+          <section className="settings-section">
+            <h4>Agent 通知</h4>
+            <label className="check-row">
+              <input
+                type="checkbox"
+                checked={an.enabled}
+                onChange={(e) => patchAgentNotify({ enabled: e.target.checked })}
+              />
+              启用（接收 Claude Code / Codex 的完成与待审批事件，由桌宠冒泡提醒）
+            </label>
+            <Field label="端口">
+              <input
+                className="f-input"
+                type="number"
+                min={1024}
+                max={65535}
+                value={an.port}
+                onChange={(e) => {
+                  const v = Number(e.target.value);
+                  if (Number.isFinite(v)) patchAgentNotify({ port: v });
+                }}
+              />
+            </Field>
+            <Field label="Token（可选）">
+              <input
+                className="f-input"
+                type="password"
+                value={an.token ?? ""}
+                placeholder="留空则不校验；设置后调用方需带 ?token="
+                onChange={(e) => patchAgentNotify({ token: e.target.value || null })}
+              />
+            </Field>
+            <label className="check-row">
+              <input
+                type="checkbox"
+                checked={an.on_done}
+                onChange={(e) => patchAgentNotify({ on_done: e.target.checked })}
+              />
+              任务完成时提醒
+            </label>
+            <label className="check-row">
+              <input
+                type="checkbox"
+                checked={an.on_needs}
+                onChange={(e) => patchAgentNotify({ on_needs: e.target.checked })}
+              />
+              需要审批 / 指示时提醒
+            </label>
+            <label className="check-row">
+              <input
+                type="checkbox"
+                checked={an.on_error}
+                onChange={(e) => patchAgentNotify({ on_error: e.target.checked })}
+              />
+              出错时提醒
+            </label>
+            <ColorRow label="冷却" value={an.cooldown_ms} min={0} max={60000} step={1000}
+              fmt={(v) => (v <= 0 ? "关" : `${(v / 1000).toFixed(0)}s`)}
+              onChange={(v) => patchAgentNotify({ cooldown_ms: v })} />
+            <label className="check-row">
+              <input
+                type="checkbox"
+                checked={an.show_content}
+                onChange={(e) => patchAgentNotify({ show_content: e.target.checked })}
+              />
+              气泡含内容摘要（会带出少量代理输出，注意隐私）
+            </label>
+            <label className="check-row">
+              <input
+                type="checkbox"
+                checked={an.only_unfocused}
+                onChange={(e) => patchAgentNotify({ only_unfocused: e.target.checked })}
+              />
+              仅在 Bugzia 未获焦点时提醒（正在看本应用时不打扰）
+            </label>
+            <div className="hint">
+              事件由 Claude Code / Codex 的 hook POST 到本机此端口；运行中开启会立即生效，改端口或 token 需重启应用生效。hook 配置见 docs/agent-notify/。
+            </div>
+          </section>
         </div>
       </div>
     </div>
@@ -518,6 +631,20 @@ const LOCKED_COLOR_PRESETS = [
   "#4DABF7", // 蓝
   "#9775FA", // 紫
   "#F783AC", // 粉
+];
+
+/** Preset swatches for the unlocked (resting) card tint (history rail). Light /
+ *  neutral tones by default so the resting cards stay calm next to the vivid
+ *  locked presets; one click applies, the native picker selects any other. */
+const UNLOCKED_COLOR_PRESETS = [
+  "#FFFFFF", // 白（默认）
+  "#F5F5F5", // 浅灰
+  "#E3F2FD", // 淡蓝
+  "#F1F8E9", // 淡绿
+  "#FFF8E1", // 淡黄
+  "#FCE4EC", // 淡粉
+  "#EDE7F6", // 淡紫
+  "#263238", // 墨色（暗色卡片）
 ];
 
 /** Preset swatches for the note background (default sakura deep red #9E1B32). */

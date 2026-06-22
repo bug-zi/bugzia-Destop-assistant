@@ -13,6 +13,8 @@
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { currentMonitor, getCurrentWindow } from "@tauri-apps/api/window";
 import { LogicalPosition, LogicalSize } from "@tauri-apps/api/dpi";
+import { invoke } from "@tauri-apps/api/core";
+import { loadSettings } from "../settings/settingsStore";
 
 const LABEL = "waveform";
 const DEFAULT_W = 380;
@@ -146,9 +148,8 @@ async function defaultPlacement(): Promise<void> {
 
 /** Ensure + place + reveal. If `saved` carries a user placement (x >= 0),
  *  restore that exact position + size; otherwise default to centered lower-area.
- *  Pin / click-through are applied separately from main via backend commands
- *  (see waveform_set_always_on_top / waveform_set_locked), so this only owns
- *  geometry — that ordering guarantees the window exists before those run. */
+ *  Click-through lock + always-on-top are re-applied as the LAST step of every
+ *  reveal from the persisted settings (see the note after `show()` below). */
 export async function showWaveformWindow(saved?: WaveformGeom): Promise<void> {
   const wf = await ensureWaveformWindow();
   if (saved && saved.x >= 0 && saved.y >= 0) {
@@ -173,6 +174,18 @@ export async function showWaveformWindow(saved?: WaveformGeom): Promise<void> {
   } catch (e) {
     console.error("[bugzia] show waveform window", e);
   }
+  // Re-apply click-through lock + always-on-top as the LAST step of every
+  // reveal. On first open (x/y = -1 sentinel) BOTH the CommandCard enabled
+  // effect and the reset-position effect call showWaveformWindow, so show()
+  // runs twice and races; a later show() can reset ignore_cursor_events on
+  // Windows, un-doing a lock applied by the earlier call and leaving a
+  // locked=true overlay interactive (the "lock fails on first open" bug).
+  // Applying these flags after EVERY show makes the saved state the last
+  // writer, so the lock always sticks no matter how many concurrent shows
+  // race. Idempotent with the main window's effects; mirrored in showPetWindow.
+  const s = await loadSettings();
+  await invoke("waveform_set_always_on_top", { top: s.waveform.always_on_top }).catch(() => {});
+  await invoke("waveform_set_locked", { locked: s.waveform.locked }).catch(() => {});
 }
 
 /** Hide (not destroy) the waveform window. Renderer state persists for next show. */

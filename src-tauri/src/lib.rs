@@ -1,7 +1,9 @@
+mod agent_notify;
 mod ai;
 mod conversations;
 mod file_search;
 mod notes;
+mod recyclebin;
 mod settings;
 mod waveform;
 mod weather;
@@ -13,7 +15,10 @@ use conversations::{
 };
 use file_search::{open_file, reveal_file, search_files};
 use notes::{notes_load, notes_save};
-use settings::{clear_api_key, load_api_key, load_settings, save_api_key, save_settings};
+use recyclebin::pet_eat_files;
+use settings::{
+    clear_api_key, load_api_key, load_settings, save_api_key, save_settings, AgentNotifySettings,
+};
 
 use std::fs;
 use std::path::PathBuf;
@@ -62,15 +67,60 @@ fn pet_set_always_on_top(app: AppHandle, top: bool) {
     }
 }
 
-/// Pin (or unpin) a desktop sticky-note window above every other window. Unlike
-/// the pet/waveform/result overlays (single instance, fixed label), notes are
-/// MULTI-INSTANCE with dynamic labels (`note-<id>`), so the target label is a
-/// parameter. Same ACL rationale: the note window's capability lacks
-/// `allow-set-always-on-top`, so the backend sets it regardless of caller ACL.
+fn agent_notify_config(s: &AgentNotifySettings) -> agent_notify::NotifyConfig {
+    agent_notify::NotifyConfig {
+        port: s.port,
+        token: s
+            .token
+            .as_deref()
+            .map(str::trim)
+            .filter(|token| !token.is_empty())
+            .map(str::to_string),
+        on_done: s.on_done,
+        on_needs: s.on_needs,
+        on_error: s.on_error,
+        show_content: s.show_content,
+    }
+}
+
+/// Start the localhost agent-notify receiver when the user enables it at
+/// runtime. The listener is intentionally one-shot; changing port/token still
+/// needs an app restart because the bound socket cannot be reconfigured.
 #[tauri::command]
-fn note_set_always_on_top(app: AppHandle, label: String, top: bool) {
+fn agent_notify_start(app: AppHandle, cfg: AgentNotifySettings) -> bool {
+    if !cfg.enabled {
+        return false;
+    }
+    agent_notify::start(app, agent_notify_config(&cfg))
+}
+
+/// Set a desktop sticky-note window's layer from its pinned state. Pinned ->
+/// always-on-top (overlays every app window, the original behaviour). Unpinned
+/// -> desktop layer: always-on-BOTTOM, so opened app windows cover the note
+/// instead of the note floating over them.
+///
+/// ORDER MATTERS on Windows (tao): `set_always_on_bottom(false)` issues a
+/// `SetWindowPos(HWND_NOTOPMOST)` that strips a just-applied topmost flag, and
+/// `set_always_on_top(false)` raises the window toward the top. So we clear the
+/// OPPOSITE layer first and apply the TARGET layer LAST — the final
+/// `SetWindowPos` is what fixes the z-order. Doing both unconditionally (top
+/// then bottom) left pinned notes non-topmost, covered by other windows.
+///
+/// Unlike the pet/waveform/result overlays (single instance, fixed label), notes
+/// are MULTI-INSTANCE with dynamic labels (`note-<id>`), so the target label is a
+/// parameter. Same ACL rationale: the note window's capability lacks
+/// `allow-set-always-on-top` / `allow-set-always-on-bottom`, so the backend sets
+/// them regardless of caller ACL.
+#[tauri::command]
+fn note_set_layer(app: AppHandle, label: String, pinned: bool) {
     if let Some(win) = app.get_webview_window(&label) {
-        let _ = win.set_always_on_top(top);
+        if pinned {
+            let _ = win.set_always_on_bottom(false); // stop sinking first
+            let _ = win.set_always_on_top(true); // then raise LAST -> stays topmost
+        } else {
+            let _ = win.set_always_on_top(false); // drop out of topmost first
+            let _ = win.set_always_on_bottom(true); // then sink LAST -> desktop layer
+        }
     }
 }
 
@@ -219,6 +269,15 @@ pub fn run() {
         .setup(|app| {
             sync_autostart(app.handle());
             build_tray(app.handle())?;
+            // Agent-notify receiver: a localhost HTTP endpoint that Claude Code
+            // and Codex POST lifecycle events to (turn complete / approval
+            // needed / errors). Started only when the user enables it; a bind
+            // failure (port taken) is logged inside start() and never fatal.
+            if let Ok(s) = load_settings(app.handle().clone()) {
+                if s.agent_notify.enabled {
+                    agent_notify::start(app.handle().clone(), agent_notify_config(&s.agent_notify));
+                }
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -253,9 +312,11 @@ pub fn run() {
             pet_set_locked,
             pet_set_always_on_top,
             pet_assets_dir,
+            pet_eat_files,
             notes_load,
             notes_save,
-            note_set_always_on_top,
+            note_set_layer,
+            agent_notify_start,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

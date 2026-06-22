@@ -1,11 +1,11 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { LogicalPosition, LogicalSize } from "@tauri-apps/api/dpi";
 import { emit, emitTo, listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import InputBar from "./InputBar";
 import "./CommandCard.css";
-import { browserSearch, COMMANDS, parseCommand, SEARCH_ENGINES, type CommandMode, type SearchEngine } from "../features/search/command";
+import { browserSearch, COMMANDS, parseCommand, SEARCH_ENGINES, slashPaletteItems, type CommandMode, type SearchEngine, type SlashPaletteItem } from "../features/search/command";
 import { streamChat, streamOnce, stopChat, clearContext, type ChatEvent, type ChatMessage } from "../features/ai/chat";
 import { listConversations, getConversation, upsertConversation, deriveTitle } from "../features/conversations/conversations";
 import { loadSettings, saveSettings } from "../features/settings/settingsStore";
@@ -33,7 +33,7 @@ import {
   closeNoteWindow,
   createNoteWindow,
   onNoteGeometryChange,
-  setNoteAlwaysOnTop,
+  setNoteLayer,
 } from "../features/note/noteWindow";
 import { notesLoad, notesSave } from "../features/note/notesStore";
 import {
@@ -47,6 +47,16 @@ import {
   type NoteRecord,
 } from "../features/note/noteTypes";
 import { EV, type FileResult, type ResultMode } from "../features/result/resultTypes";
+import { PET_INPUT_PREVIEW } from "../features/petAgent/petInput";
+import {
+  emitSlashPaletteState,
+  hideSlashPaletteWindow,
+  onSlashPaletteAccept,
+  onSlashPaletteHover,
+  onSlashPaletteKey,
+  onSlashPaletteReady,
+  showSlashPaletteWindow,
+} from "../features/slashPalette/slashPaletteWindow";
 
 const COLLAPSED_H = 64;
 const SAVE_DEBOUNCE_MS = 400;
@@ -67,18 +77,67 @@ function patchLastAssistant(msgs: ChatMessage[], fn: (content: string) => string
   return msgs;
 }
 
-/** Markdown listing of every command in the registry (powers /help). */
+/**
+ * Keyboard shortcuts active in the input bar (Ctrl+L works from anywhere).
+ * Listed by `/help`. Declared as data to mirror the COMMANDS registry style —
+ * adding a shortcut means appending a line, not editing prose.
+ */
+const INPUT_SHORTCUTS: { keys: string; desc: string }[] = [
+  { keys: "Enter", desc: "发送（默认为 AI 对话）" },
+  { keys: "Ctrl + Enter", desc: "用浏览器搜索（等同 /web）" },
+  { keys: "Alt + Enter", desc: "搜索本地文件（等同 /file）" },
+  { keys: "Esc", desc: "收起结果框" },
+  { keys: "Ctrl + L", desc: "聚焦并全选输入框（任意位置可用）" },
+];
+
+/** Clickable affordances on the input bar, left-to-right. Listed by `/help`. */
+const INPUT_BUTTONS: { name: string; desc: string }[] = [
+  { name: "星标", desc: "展开 / 收起结果框" },
+  { name: "齿轮", desc: "打开设置" },
+  { name: "拖动输入框空白处", desc: "移动卡片（位置锁定后禁用）" },
+];
+
+/** Buttons inside the result overlay. Listed by `/help` for completeness. */
+const RESULT_BUTTONS: { name: string; desc: string }[] = [
+  { name: "图钉", desc: "固定并置顶（Esc 将不再隐藏结果框）" },
+  { name: "历史", desc: "切换历史对话" },
+  { name: "关闭", desc: "关闭结果框（不清空对话上下文）" },
+];
+
+/**
+ * Markdown help rendered by `/help`. Lists every slash command (from the
+ * COMMANDS registry) PLUS the keyboard shortcuts and the bar's clickable
+ * buttons, so a single command documents how to use the whole input box.
+ */
 function renderHelpMarkdown(): string {
-  const lines = COMMANDS.filter((c) => !c.hidden).map((c) => {
+  const cmdLines = COMMANDS.filter((c) => !c.hidden).map((c) => {
     const triggers = [c.prefix, ...(c.aliases ?? [])].filter(Boolean) as string[];
     return `- **${triggers.join(" / ")}** — ${c.description}`;
   });
+  const shortcutLines = INPUT_SHORTCUTS.map((s) => `- **${s.keys}** — ${s.desc}`);
+  const buttonLines = INPUT_BUTTONS.map((b) => `- **${b.name}** — ${b.desc}`);
+  const resultLines = RESULT_BUTTONS.map((b) => `- **${b.name}** — ${b.desc}`);
+
   return [
-    "可用命令",
+    "输入框使用方法",
     "",
-    ...lines,
+    "斜杠命令（在输入框里输入，回车执行）",
     "",
-    "直接输入文本即与 AI 对话；带参数的命令需在命令名后加一个空格再写内容。",
+    ...cmdLines,
+    "",
+    "直接打字回车即与 AI 对话；带参数的命令需在命令名后加一个空格再写内容。`?` 无需空格，如 `?北京` 直接搜索。",
+    "",
+    "快捷键（输入框内）",
+    "",
+    ...shortcutLines,
+    "",
+    "输入栏按钮",
+    "",
+    ...buttonLines,
+    "",
+    "结果框内",
+    "",
+    ...resultLines,
   ].join("\n");
 }
 
@@ -276,8 +335,7 @@ export default function CommandCard() {
       notesRef.current = list;
       const ns = settingsRef.current?.note ?? DEFAULT_NOTE;
       for (const rec of list) {
-        await createNoteWindow(rec, { w: ns.w, h: ns.h }).catch(logErr("restore note"));
-        void setNoteAlwaysOnTop(rec.id, true).catch(logErr("note on_top"));
+        await createNoteWindow(rec, { w: ns.w, h: ns.h }, notesRef.current).catch(logErr("restore note"));
       }
     })();
     return () => {
@@ -349,6 +407,7 @@ export default function CommandCard() {
           waveform: ev.payload.waveform ?? cur.waveform,
           pet: ev.payload.pet ?? cur.pet,
           note: ev.payload.note ?? cur.note,
+          agent_notify: ev.payload.agent_notify ?? cur.agent_notify,
         };
         update(merged);
         applyAppearanceVars(merged.appearance);
@@ -360,6 +419,14 @@ export default function CommandCard() {
       unlisten?.();
     };
   }, [update]);
+
+  // Agent notify can be enabled from Settings while Bugzia is already running.
+  // The backend listener binds once; changing port/token still needs restart.
+  useEffect(() => {
+    const cfg = settings?.agent_notify;
+    if (!cfg?.enabled) return;
+    void invoke("agent_notify_start", { cfg }).catch(logErr("agent_notify_start"));
+  }, [settings?.agent_notify.enabled]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── result window -> main: chat control + lifecycle + ready-handshake ──
   useEffect(() => {
@@ -695,7 +762,7 @@ export default function CommandCard() {
           notesRef.current = notesRef.current.map((n) =>
             n.id === ev.payload.id ? { ...n, pinned: ev.payload.pinned } : n,
           );
-          void setNoteAlwaysOnTop(ev.payload.id, ev.payload.pinned).catch(logErr("note on_top"));
+          void setNoteLayer(ev.payload.id, ev.payload.pinned).catch(logErr("note set_layer"));
           scheduleNotesSave();
         }),
       );
@@ -735,6 +802,132 @@ export default function CommandCard() {
     if (!settings) return;
     emit(NOTE_SETTINGS, settings.note).catch(logErr("emit note settings"));
   }, [settings?.note]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── slash-command palette (autocomplete floating above the bar) ───────────
+  // InputBar owns the keystrokes; main is the single source of truth for the
+  // filtered list + highlighted index and mirrors it to the `slashpalette`
+  // overlay window (which only renders + relays click/hover back, like the
+  // result overlay).
+  const paletteItems = useMemo(() => slashPaletteItems(value), [value]);
+  const [paletteIndex, setPaletteIndex] = useState(0);
+  const [paletteDismissed, setPaletteDismissed] = useState(false);
+  const paletteOpen = paletteItems.length > 0 && !paletteDismissed;
+  const safePaletteIndex =
+    paletteItems.length > 0 ? Math.min(paletteIndex, paletteItems.length - 1) : 0;
+
+  // Fresh snapshot for the once-registered accept/ready listeners — they cannot
+  // close over per-render values without re-subscribing on every keystroke.
+  const paletteStateRef = useRef({ items: paletteItems, index: safePaletteIndex });
+  paletteStateRef.current = { items: paletteItems, index: safePaletteIndex };
+  const acceptPaletteRef = useRef<(item: SlashPaletteItem, via: "enter" | "tab") => void>(
+    () => {},
+  );
+
+  /** Accept a palette row. Argless commands (e.g. /help) submit immediately on
+   *  Enter; everything else is filled as `<trigger> ` so the user can type the
+   *  query. Tab always fills without running. The dismissal latch keeps the
+   *  palette closed until the user types again; the trailing space / the help
+   *  clear closes it too. */
+  const acceptPalette = (item: SlashPaletteItem, via: "enter" | "tab") => {
+    setPaletteDismissed(true);
+    if (item.argless && via === "enter") {
+      void handleSubmit(item.mode);
+    } else {
+      handleInputChange(item.argless ? item.trigger : `${item.trigger} `);
+    }
+  };
+  acceptPaletteRef.current = acceptPalette;
+
+  /** User typed in the bar: clear the dismissal latch so the palette can reopen,
+   *  then forward to the normal change handler (value + pet preview). Acceptance
+   *  fills call `handleInputChange` DIRECTLY so they do NOT clear the latch. */
+  const onInputChange = (next: string) => {
+    setPaletteDismissed(false);
+    handleInputChange(next);
+  };
+
+  // Keep the highlighted index inside the (possibly shrunk) list.
+  useEffect(() => {
+    if (paletteItems.length > 0 && paletteIndex >= paletteItems.length) {
+      setPaletteIndex(0);
+    }
+  }, [paletteItems.length, paletteIndex]);
+
+  // The shared input element ref. CommandCard owns it so it can reclaim focus
+  // AFTER the palette overlay reveals (show() can steal focus on some platforms;
+  // reclaiming it before show resolves is too early, so we do it in the .then).
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  // Show / hide + position the overlay. Runs only when the open-state OR the row
+  // count changes — NOT on every highlight move, which would re-show the window
+  // on each arrow press. Focus is reclaimed after reveal so the bar keeps
+  // receiving the Arrow / Enter / Tab / Esc keystrokes that drive the palette.
+  useEffect(() => {
+    let cancelled = false;
+    if (paletteOpen) {
+      showSlashPaletteWindow(paletteItems.length)
+        .then(async () => {
+          if (cancelled) return;
+          try {
+            await getCurrentWindow().setFocus();
+          } catch {
+            // non-fatal: focus is best-effort
+          }
+          inputRef.current?.focus();
+          emitSlashPaletteState(paletteItems, safePaletteIndex);
+        })
+        .catch(logErr("show slashpalette"));
+    } else {
+      void hideSlashPaletteWindow().catch(logErr("hide slashpalette"));
+    }
+    return () => {
+      cancelled = true;
+    };
+  }, [paletteOpen, paletteItems.length]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Push the current filtered list + highlight whenever they change. This covers
+  // the per-arrow highlight moves cheaply, WITHOUT re-showing the window.
+  useEffect(() => {
+    if (paletteOpen) emitSlashPaletteState(paletteItems, safePaletteIndex);
+  }, [paletteOpen, paletteItems, safePaletteIndex]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Register the palette's pointer relays once. They read the latest snapshot
+  // via refs so they never go stale across renders.
+  useEffect(() => {
+    const offs: UnlistenFn[] = [];
+    (async () => {
+      offs.push(await onSlashPaletteHover((i) => setPaletteIndex(i)));
+      offs.push(
+        await onSlashPaletteAccept((i) => {
+          const st = paletteStateRef.current;
+          const item = st.items[i];
+          if (item) acceptPaletteRef.current(item, "enter");
+        }),
+      );
+      offs.push(
+        await onSlashPaletteReady(() => {
+          const st = paletteStateRef.current;
+          emitSlashPaletteState(st.items, st.index);
+        }),
+      );
+      // Navigation keys relayed from the palette window (when focus landed in it
+      // instead of the bar). Same logic as the input's keydown.
+      offs.push(
+        await onSlashPaletteKey((key) => {
+          const { items, index } = paletteStateRef.current;
+          if (items.length === 0) return;
+          const len = items.length;
+          const idx = Math.min(index, len - 1);
+          if (key === "ArrowDown") setPaletteIndex((i) => (i + 1) % len);
+          else if (key === "ArrowUp") setPaletteIndex((i) => (i - 1 + len) % len);
+          else if (key === "Enter") acceptPaletteRef.current(items[idx], "enter");
+          else if (key === "Tab") acceptPaletteRef.current(items[idx], "tab");
+          else if (key === "Escape") setPaletteDismissed(true);
+        }),
+      );
+    })();
+    return () => offs.forEach((off) => off());
+  }, []);
 
   function resolveEngine(): SearchEngine {
     const s = settingsRef.current;
@@ -897,8 +1090,7 @@ export default function CommandCard() {
       pinned: false,
     };
     notesRef.current = [...notesRef.current, record];
-    await createNoteWindow(record, { w: s.w, h: s.h }).catch(logErr("create note"));
-    void setNoteAlwaysOnTop(record.id, true).catch(logErr("note on_top"));
+    await createNoteWindow(record, { w: s.w, h: s.h }, notesRef.current).catch(logErr("create note"));
     setStatusText("已生成便笺");
     window.setTimeout(() => setStatusText(""), 1500);
   }
@@ -1033,6 +1225,15 @@ export default function CommandCard() {
     if (!pinnedRef.current) void concealResult();
   }
 
+  function handleInputChange(next: string) {
+    setValue(next);
+    emit(PET_INPUT_PREVIEW, {
+      text: next,
+      mode: parseCommand(next).mode,
+      at: Date.now(),
+    }).catch(logErr("emit pet input preview"));
+  }
+
   async function toggleResult() {
     // Spark click: show the overlay if hidden, hide it if already visible.
     if (await isResultVisible()) {
@@ -1061,12 +1262,19 @@ export default function CommandCard() {
         value={value}
         locked={locked}
         statusText={statusText}
-        onChange={setValue}
+        onChange={onInputChange}
         onSubmit={handleSubmit}
         onOpenSettings={() => void handleOpenSettings()}
         onHideResult={handleHideResult}
         onToggleResult={() => void toggleResult()}
         resultOpen={resultOpen}
+        inputRef={inputRef}
+        paletteItems={paletteItems}
+        paletteIndex={safePaletteIndex}
+        paletteOpen={paletteOpen}
+        onPaletteIndexChange={setPaletteIndex}
+        onPaletteAccept={(item, via) => acceptPalette(item, via)}
+        onPaletteDismiss={() => setPaletteDismissed(true)}
       />
     </div>
   );

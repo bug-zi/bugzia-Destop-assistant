@@ -40,6 +40,10 @@ export function streamOnce(prompt: string, onEvent: (e: ChatEvent) => void): Pro
   return invoke("ask_once_stream", { prompt, onEvent: ch });
 }
 
+export function askOnce(prompt: string): Promise<string> {
+  return invoke("ask_once", { prompt });
+}
+
 /** Abort the in-flight generation (takes effect at the next streamed token). */
 export function stopChat(): Promise<void> {
   return invoke("stop_chat");
