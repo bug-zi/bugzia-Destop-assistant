@@ -5,13 +5,17 @@ mod file_search;
 mod notes;
 mod recyclebin;
 mod settings;
+mod social_notify;
 mod waveform;
 mod weather;
 
-use ai::{ask_once, ask_once_stream, chat, clear_context, get_messages, set_messages, stop_chat, test_ai_connection};
+use ai::{
+    ask_once, ask_once_stream, chat, clear_context, get_messages, set_messages, stop_chat,
+    test_ai_connection,
+};
 use conversations::{
-    delete_conversation, get_conversation, list_conversations, reorder_conversations,
-    rename_conversation, set_conversation_locked, upsert_conversation,
+    delete_conversation, get_conversation, list_conversations, rename_conversation,
+    reorder_conversations, set_conversation_locked, upsert_conversation,
 };
 use file_search::{open_file, reveal_file, search_files};
 use notes::{notes_load, notes_save};
@@ -22,6 +26,35 @@ use settings::{
 
 use std::fs;
 use std::path::PathBuf;
+use std::process::Command;
+
+#[cfg(target_os = "windows")]
+use std::os::windows::process::CommandExt;
+
+#[cfg(target_os = "windows")]
+const HWND_BOTTOM: isize = 1;
+#[cfg(target_os = "windows")]
+const HWND_TOPMOST: isize = -1;
+#[cfg(target_os = "windows")]
+const SWP_NOMOVE: u32 = 0x0002;
+#[cfg(target_os = "windows")]
+const SWP_NOSIZE: u32 = 0x0001;
+#[cfg(target_os = "windows")]
+const SWP_SHOWWINDOW: u32 = 0x0040;
+
+#[cfg(target_os = "windows")]
+#[link(name = "user32")]
+extern "system" {
+    fn SetWindowPos(
+        hwnd: isize,
+        hwnd_insert_after: isize,
+        x: i32,
+        y: i32,
+        cx: i32,
+        cy: i32,
+        flags: u32,
+    ) -> i32;
+}
 
 use tauri::menu::{CheckMenuItem, IsMenuItem, Menu, MenuItem};
 use tauri::tray::TrayIconBuilder;
@@ -58,12 +91,42 @@ fn pet_set_locked(app: AppHandle, locked: bool) {
     }
 }
 
-/// Pin (or unpin) the pet overlay above every other window. Same ACL rationale
-/// as `pet_set_locked` / `set_result_always_on_top`.
+/// Pin the pet overlay above every other window, or return it to the desktop
+/// layer when unpinned. Same ACL rationale as `pet_set_locked`.
 #[tauri::command]
 fn pet_set_always_on_top(app: AppHandle, top: bool) {
     if let Some(win) = app.get_webview_window("pet") {
-        let _ = win.set_always_on_top(top);
+        pet_apply_layer(&win, top);
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn pet_apply_layer(win: &tauri::WebviewWindow, top: bool) {
+    let _ = win.show();
+    if let Ok(hwnd) = win.hwnd() {
+        let insert_after = if top { HWND_TOPMOST } else { HWND_BOTTOM };
+        let flags = SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW;
+        unsafe {
+            let _ = SetWindowPos(hwnd.0 as isize, insert_after, 0, 0, 0, 0, flags);
+        }
+    } else if top {
+        let _ = win.set_always_on_bottom(false);
+        let _ = win.set_always_on_top(true);
+    } else {
+        let _ = win.set_always_on_top(false);
+        let _ = win.set_always_on_bottom(true);
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn pet_apply_layer(win: &tauri::WebviewWindow, top: bool) {
+    if top {
+        let _ = win.set_always_on_bottom(false);
+        let _ = win.show();
+        let _ = win.set_always_on_top(true);
+    } else {
+        let _ = win.set_always_on_top(false);
+        let _ = win.set_always_on_bottom(true);
     }
 }
 
@@ -92,6 +155,123 @@ fn agent_notify_start(app: AppHandle, cfg: AgentNotifySettings) -> bool {
         return false;
     }
     agent_notify::start(app, agent_notify_config(&cfg))
+}
+
+#[tauri::command]
+fn social_notify_start(app: AppHandle, cfg: social_notify::SocialNotifySettings) -> bool {
+    social_notify::start(app, cfg)
+}
+
+#[tauri::command]
+fn agent_notify_open_target(payload: serde_json::Value) -> Result<bool, String> {
+    let source = payload
+        .get("source")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let cwd = payload
+        .get("cwd")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    focus_agent_window(&source, &cwd)
+}
+
+#[cfg(target_os = "windows")]
+fn focus_agent_window(source: &str, cwd: &str) -> Result<bool, String> {
+    let script = r#"
+$source = $env:BUGZIA_AGENT_SOURCE
+$cwd = $env:BUGZIA_AGENT_CWD
+$leaf = ""
+if ($cwd) {
+  try { $leaf = Split-Path -Leaf $cwd } catch {}
+}
+Add-Type @"
+using System;
+using System.Runtime.InteropServices;
+public struct BugziaRect {
+  public int Left;
+  public int Top;
+  public int Right;
+  public int Bottom;
+}
+public class BugziaWin32 {
+  [DllImport("user32.dll")]
+  public static extern bool SetForegroundWindow(IntPtr hWnd);
+  [DllImport("user32.dll")]
+  public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+  [DllImport("user32.dll")]
+  public static extern bool IsZoomed(IntPtr hWnd);
+  [DllImport("user32.dll")]
+  public static extern bool GetWindowRect(IntPtr hWnd, out BugziaRect lpRect);
+  [DllImport("user32.dll")]
+  public static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int X, int Y, int cx, int cy, uint uFlags);
+  [DllImport("user32.dll")]
+  public static extern bool SystemParametersInfo(uint uiAction, uint uiParam, ref BugziaRect pvParam, uint fWinIni);
+}
+"@
+
+$wins = @(Get-Process | Where-Object { $_.MainWindowHandle -ne 0 })
+$matches = @()
+if ($source -eq "codex") {
+  $matches = @($wins | Where-Object {
+    $_.ProcessName -match "(?i)codex" -or $_.MainWindowTitle -match "(?i)codex"
+  })
+} elseif ($source -eq "claude") {
+  $matches = @($wins | Where-Object {
+    $_.MainWindowTitle -match "(?i)claude|claude code" -or
+    $_.ProcessName -match "(?i)code|windowsterminal|wt|powershell|pwsh|cmd"
+  })
+}
+if ($leaf) {
+  $byCwd = @($matches | Where-Object { $_.MainWindowTitle -like "*$leaf*" })
+  if ($byCwd.Count -gt 0) { $matches = $byCwd }
+}
+$target = @($matches | Select-Object -First 1)[0]
+if ($null -eq $target) { exit 2 }
+$handle = $target.MainWindowHandle
+[BugziaWin32]::ShowWindow($handle, 1) | Out-Null
+$work = New-Object BugziaRect
+$rect = New-Object BugziaRect
+if ([BugziaWin32]::SystemParametersInfo(48, 0, [ref]$work, 0) -and [BugziaWin32]::GetWindowRect($handle, [ref]$rect)) {
+  $workW = $work.Right - $work.Left
+  $workH = $work.Bottom - $work.Top
+  $winW = $rect.Right - $rect.Left
+  $winH = $rect.Bottom - $rect.Top
+  $looksFullscreen = [BugziaWin32]::IsZoomed($handle) -or (($workW -gt 0) -and ($workH -gt 0) -and ($winW -ge ($workW - 8)) -and ($winH -ge ($workH - 8)))
+  if ($looksFullscreen) {
+    $targetW = [Math]::Max(480, [Math]::Min(1280, [int]($workW * 0.72)))
+    $targetH = [Math]::Max(360, [Math]::Min(820, [int]($workH * 0.78)))
+    $targetW = [Math]::Min($targetW, [Math]::Max(320, $workW - 80))
+    $targetH = [Math]::Min($targetH, [Math]::Max(240, $workH - 80))
+    $x = $work.Left + [int](($workW - $targetW) / 2)
+    $y = $work.Top + [int](($workH - $targetH) / 2)
+    [BugziaWin32]::SetWindowPos($handle, [IntPtr]::Zero, $x, $y, $targetW, $targetH, 0x0244) | Out-Null
+  }
+}
+[BugziaWin32]::SetForegroundWindow($handle) | Out-Null
+exit 0
+"#;
+
+    let output = Command::new("powershell")
+        .args([
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+            script,
+        ])
+        .env("BUGZIA_AGENT_SOURCE", source)
+        .env("BUGZIA_AGENT_CWD", cwd)
+        .creation_flags(0x08000000)
+        .output()
+        .map_err(|e| format!("focus agent window: {e}"))?;
+    Ok(output.status.success())
+}
+
+#[cfg(not(target_os = "windows"))]
+fn focus_agent_window(_source: &str, _cwd: &str) -> Result<bool, String> {
+    Ok(false)
 }
 
 /// Set a desktop sticky-note window's layer from its pinned state. Pinned ->
@@ -175,19 +355,35 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
         .unwrap_or(false);
 
     let show_item = MenuItem::with_id(app, "show", "显示 Bugzia", true, None::<&str>)?;
-    let autostart_item =
-        CheckMenuItem::with_id(app, "autostart", "开机自启", true, want_autostart, None::<&str>)?;
-    let pet_item =
-        CheckMenuItem::with_id(app, "pet", "桌宠", true, want_pet, None::<&str>)?;
-    let waveform_item =
-        CheckMenuItem::with_id(app, "waveform", "桌面波形", true, want_waveform, None::<&str>)?;
+    let autostart_item = CheckMenuItem::with_id(
+        app,
+        "autostart",
+        "开机自启",
+        true,
+        want_autostart,
+        None::<&str>,
+    )?;
+    let pet_item = CheckMenuItem::with_id(app, "pet", "桌宠", true, want_pet, None::<&str>)?;
+    let waveform_item = CheckMenuItem::with_id(
+        app,
+        "waveform",
+        "桌面波形",
+        true,
+        want_waveform,
+        None::<&str>,
+    )?;
     let quit_item = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
     // Heterogeneous item types need an explicit `&[&dyn IsMenuItem]` coercion.
     let autostart_for_handler = autostart_item.clone();
     let pet_for_handler = pet_item.clone();
     let waveform_for_handler = waveform_item.clone();
-    let items: &[&dyn IsMenuItem<Wry>] =
-        &[&show_item, &autostart_item, &pet_item, &waveform_item, &quit_item];
+    let items: &[&dyn IsMenuItem<Wry>] = &[
+        &show_item,
+        &autostart_item,
+        &pet_item,
+        &waveform_item,
+        &quit_item,
+    ];
     let menu = Menu::with_items(app, items)?;
 
     TrayIconBuilder::new()
@@ -277,6 +473,9 @@ pub fn run() {
                 if s.agent_notify.enabled {
                     agent_notify::start(app.handle().clone(), agent_notify_config(&s.agent_notify));
                 }
+                if s.social_notify.enabled {
+                    social_notify::start(app.handle().clone(), s.social_notify);
+                }
             }
             Ok(())
         })
@@ -317,6 +516,8 @@ pub fn run() {
             notes_save,
             note_set_layer,
             agent_notify_start,
+            agent_notify_open_target,
+            social_notify_start,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

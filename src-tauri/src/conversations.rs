@@ -171,7 +171,11 @@ fn derive_title(title: &str, messages: &[ConvMessage]) -> String {
 fn prune(convs: Vec<Conversation>) -> Vec<Conversation> {
     let mut by_recency = convs.clone();
     // Newest first by updated_at; ties broken by created_at.
-    by_recency.sort_by(|a, b| b.updated_at.cmp(&a.updated_at).then(b.created_at.cmp(&a.created_at)));
+    by_recency.sort_by(|a, b| {
+        b.updated_at
+            .cmp(&a.updated_at)
+            .then(b.created_at.cmp(&a.created_at))
+    });
     let mut keep: std::collections::HashSet<String> = std::collections::HashSet::new();
     let mut unlocked_kept = 0usize;
     for c in &by_recency {

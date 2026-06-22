@@ -45,4 +45,11 @@ trash = "5"
 # user. tiny_http is synchronous + thread-per-connection, so it runs in a
 # dedicated std::thread without pulling an async runtime into the app.
 tiny_http = "0.12"
-
+windows = { version = "0.56", features = [
+  "ApplicationModel",
+  "Foundation",
+  "Foundation_Collections",
+  "UI_Notifications",
+  "UI_Notifications_Management",
+  "Win32_System_WinRT",
+] }

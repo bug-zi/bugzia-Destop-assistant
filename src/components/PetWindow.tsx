@@ -113,14 +113,17 @@ const AI_FAILURE_INTERACTION_NOTICE_MIN_INTERVAL_MS = 8_000;
 const AI_UNAVAILABLE_LINE = "本女王暂时懒得回应。";
 const CHAT_AI_TIMEOUT_MS = 20_000;
 const CHAT_THINKING_LINE = "稍等，本女王正在想。";
+const PET_SOCIAL_NOTIFY = "pet:social-notify";
 
-type PetNoticePriority = "ambient" | "input" | "system" | "interaction";
+type PetNoticePriority = "ambient" | "input" | "system" | "interaction" | "social" | "agent";
 
 const NOTICE_PRIORITY: Record<PetNoticePriority, number> = {
   ambient: 0,
   input: 1,
   system: 2,
   interaction: 3,
+  social: 3,
+  agent: 4,
 };
 
 const MOOD_EXPRESSION: Partial<Record<PetMood, string>> = {
@@ -208,6 +211,13 @@ interface ActivePetNotice {
   expiresAt: number;
 }
 
+interface PetSocialNotify {
+  source: "wechat" | "qq" | "dingtalk" | string;
+  appName: string;
+  summary?: string;
+  receivedAt: number;
+}
+
 export default function PetWindow() {
   const [action, dispatch] = useReducer(petReducer, "idle");
   const actionSpec = ACTIONS[action];
@@ -220,7 +230,6 @@ export default function PetWindow() {
   const lastAiFailureNoticeAtRef = useRef(0);
   const lastInputReactionAtRef = useRef(0);
   const lastInputReactionTextRef = useRef("");
-  const speechRequestRef = useRef(0);
   const chatRequestRef = useRef(0);
   const dragSessionRef = useRef(0);
   const dragPollTimerRef = useRef<number | null>(null);
@@ -232,7 +241,10 @@ export default function PetWindow() {
   // on_* flags + show_content are enforced Rust-side before the event fires).
   const agentNotifyRef = useRef<AgentNotifySettings>(DEFAULT_AGENT_NOTIFY);
   const lastAgentNotifyAtRef = useRef<Record<string, number>>({});
+  const agentNotifyTopTimerRef = useRef<number | null>(null);
   const [bubble, setBubble] = useState<string | null>(null);
+  const [agentAction, setAgentAction] = useState<PetAgentNotify | null>(null);
+  const [socialAction, setSocialAction] = useState<PetSocialNotify | null>(null);
   const [mood, setMood] = useState<PetMood>("neutral");
   const [dragOver, setDragOver] = useState(false);
   const [chatOpen, setChatOpen] = useState(false);
@@ -356,6 +368,21 @@ export default function PetWindow() {
     };
   }, []);
 
+  useEffect(() => {
+    let un: UnlistenFn | undefined;
+    let alive = true;
+    (async () => {
+      un = await listen<PetSocialNotify>(PET_SOCIAL_NOTIFY, (ev) => {
+        reactToSocialNotify(ev.payload);
+      });
+      if (!alive && un) un();
+    })();
+    return () => {
+      alive = false;
+      un?.();
+    };
+  }, []);
+
   // Idle random-speech timer.
   useEffect(() => {
     if (!settings.speech_enabled) return;
@@ -386,18 +413,22 @@ export default function PetWindow() {
     };
   }, [settings.speech_enabled, settings.speech_interval_ms, settings.speech_lines]);
 
-  // Auto-clear the speech bubble after a moment.
+  // Auto-clear regular speech bubbles after a moment. Agent notifications with
+  // action buttons stay until the user chooses an option.
   useEffect(() => {
     if (bubble == null) return;
+    if (agentAction || socialAction) return;
     const currentNotice = activeNoticeRef.current;
     const delay = currentNotice ? Math.max(0, currentNotice.expiresAt - Date.now()) : BUBBLE_TTL_MS;
     const t = window.setTimeout(() => {
       if (currentNotice && activeNoticeRef.current?.id !== currentNotice.id) return;
       activeNoticeRef.current = null;
+      setAgentAction(null);
+      setSocialAction(null);
       setBubble(null);
     }, delay);
     return () => window.clearTimeout(t);
-  }, [bubble]);
+  }, [bubble, agentAction, socialAction]);
 
   // OS file drag-drop: dropping files on the pet sends them to the recycle bin
   // ("the pet eats them"). Only active when NOT locked — a click-through (locked)
@@ -517,6 +548,7 @@ export default function PetWindow() {
     moodValue: PetMood,
     priority: PetNoticePriority,
     aiAction?: PetAiAction,
+    ttlMs: number | null = BUBBLE_TTL_MS,
   ): number | null {
     const now = Date.now();
     const current = activeNoticeRef.current;
@@ -532,12 +564,62 @@ export default function PetWindow() {
     activeNoticeRef.current = {
       id,
       priority,
-      expiresAt: now + BUBBLE_TTL_MS,
+      expiresAt: ttlMs == null ? Number.POSITIVE_INFINITY : now + ttlMs,
     };
     if (aiAction) applyAiAction(aiAction);
     setMood(moodValue);
     setBubble(line);
     return id;
+  }
+
+  function temporarilyRaiseForAgentNotify(ttlMs: number | null = BUBBLE_TTL_MS) {
+    if (settingsRef.current.always_on_top) return;
+    if (agentNotifyTopTimerRef.current != null) {
+      window.clearTimeout(agentNotifyTopTimerRef.current);
+      agentNotifyTopTimerRef.current = null;
+    }
+    void invoke("pet_set_always_on_top", { top: true }).catch(() => {});
+    if (ttlMs == null) return;
+    agentNotifyTopTimerRef.current = window.setTimeout(() => {
+      agentNotifyTopTimerRef.current = null;
+      if (!settingsRef.current.always_on_top) {
+        void invoke("pet_set_always_on_top", { top: false }).catch(() => {});
+      }
+    }, ttlMs + 800);
+  }
+
+  function restoreAgentNotifyLayer() {
+    if (agentNotifyTopTimerRef.current != null) {
+      window.clearTimeout(agentNotifyTopTimerRef.current);
+      agentNotifyTopTimerRef.current = null;
+    }
+    if (!settingsRef.current.always_on_top) {
+      void invoke("pet_set_always_on_top", { top: false }).catch(() => {});
+    }
+  }
+
+  function dismissAgentNotifyChoice() {
+    activeNoticeRef.current = null;
+    setAgentAction(null);
+    setSocialAction(null);
+    setBubble(null);
+    restoreAgentNotifyLayer();
+  }
+
+  function dismissSocialNotifyChoice() {
+    activeNoticeRef.current = null;
+    setSocialAction(null);
+    setBubble(null);
+    restoreAgentNotifyLayer();
+  }
+
+  function goToAgentNotifyTarget() {
+    const payload = agentAction;
+    dismissAgentNotifyChoice();
+    if (!payload) return;
+    void invoke("agent_notify_open_target", { payload }).catch((err) =>
+      console.error("[bugzia] agent_notify_open_target", err),
+    );
   }
 
   function canResolveNotice(id: number | null): boolean {
@@ -587,17 +669,6 @@ export default function PetWindow() {
     lastInputReactionTextRef.current = text;
     lastInteractionRef.current = now;
     memoryRef.current = rememberPetEvent(memoryRef.current, "inputPreview", reaction.line);
-    const moodValue = reaction.kind === "happy"
-      ? "pleased"
-      : reaction.kind === "surprise" || reaction.kind === "curious"
-        ? "curious"
-        : reaction.kind === "protective"
-          ? "protective"
-          : reaction.kind === "annoyed"
-            ? "annoyed"
-            : reaction.kind === "mocking"
-              ? "mocking"
-              : "neutral";
     const aiAction = reaction.kind === "happy"
       ? "happy"
       : reaction.kind === "surprise"
@@ -611,12 +682,7 @@ export default function PetWindow() {
               : reaction.kind === "mocking"
                 ? "mocking"
                 : undefined;
-    showPetNotice(
-      reaction.line,
-      moodValue,
-      "input",
-      aiAction,
-    );
+    if (aiAction) applyAiAction(aiAction);
   }
 
   /** Best-effort "is any Bugzia window focused right now?" Backs the
@@ -639,11 +705,10 @@ export default function PetWindow() {
   }
 
   /** React to a Claude Code / Codex lifecycle event relayed by the Rust
-   *  receiver. Gated by speech_enabled (consistent with speak()) and the drag
-   *  state; a per-kind cooldown stops back-to-back turns from spamming bubbles;
+   *  receiver. Agent notifications are independent from regular speech bubbles;
+   *  a per-kind cooldown stops back-to-back turns from spamming bubbles;
    *  only_unfocused suppresses the bubble while a Bugzia window is focused. */
   function reactToAgentNotify(payload: PetAgentNotify) {
-    if (!settingsRef.current.speech_enabled) return;
     if (actionRef.current === "drag") return;
 
     const cfg = agentNotifyRef.current;
@@ -666,7 +731,17 @@ export default function PetWindow() {
       if (payload.tool) parts.push(`（${payload.tool}）`);
       if (cfg.show_content && payload.summary) parts.push(payload.summary);
       noteInteraction();
-      showPetNotice(parts.join(" "), reaction.mood, "system", reaction.action);
+      temporarilyRaiseForAgentNotify(null);
+      const noticeId = showPetNotice(
+        parts.join(" "),
+        reaction.mood,
+        "agent",
+        reaction.action,
+        null,
+      );
+      if (noticeId != null) {
+        setAgentAction(payload);
+      }
     };
 
     if (cfg.only_unfocused) {
@@ -677,6 +752,30 @@ export default function PetWindow() {
         .catch(() => fire());
     } else {
       fire();
+    }
+  }
+
+  function reactToSocialNotify(payload: PetSocialNotify) {
+    if (actionRef.current === "drag") return;
+
+    const label =
+      payload.source === "wechat"
+        ? "微信"
+        : payload.source === "qq"
+          ? "QQ"
+          : payload.source === "dingtalk"
+            ? "钉钉"
+            : payload.appName || "社交软件";
+    const parts = [`${label} 有新消息`];
+    const summary = payload.summary?.trim();
+    if (summary) parts.push(summary);
+
+    noteInteraction();
+    const noticeId = showPetNotice(parts.join(" "), "curious", "social", "curious", null);
+    if (noticeId != null) {
+      setAgentAction(null);
+      setSocialAction(payload);
+      temporarilyRaiseForAgentNotify(null);
     }
   }
 
@@ -715,21 +814,6 @@ export default function PetWindow() {
     }
   }
 
-  function priorityForScene(scene: PetSpeechScene): PetNoticePriority {
-    switch (scene) {
-      case "idle":
-        return "ambient";
-      case "inputPreview":
-      case "feedingHover":
-        return "input";
-      case "sleepStart":
-      case "wake":
-        return "system";
-      default:
-        return "interaction";
-    }
-  }
-
   /** "Eat" dropped files: send them to the OS recycle bin and react happily.
    *  Uses local lines via speak() so the feeding is remembered in memory, with no
    *  AI latency. */
@@ -764,32 +848,7 @@ export default function PetWindow() {
     if (!settingsRef.current.speech_enabled) return;
     const localLine = getPetLine(scene, options.extraLines);
     memoryRef.current = rememberPetEvent(memoryRef.current, scene, localLine);
-    const noticeId = showPetNotice(localLine, moodForScene(scene), priorityForScene(scene));
-    if (noticeId == null) return;
-
-    if (!options.improvise || !settingsRef.current.ai_speech_enabled) return;
-    const now = Date.now();
-    const minInterval = options.minAiIntervalMs ?? settingsRef.current.ai_interaction_interval_ms;
-    if (now - lastAiSpeechAtRef.current < minInterval) return;
-    if (actionRef.current === "sleep" || actionRef.current === "drag") return;
-
-    lastAiSpeechAtRef.current = now;
-    const requestId = ++speechRequestRef.current;
-    const memorySummary = summarizePetMemory(memoryRef.current);
-    const preferenceSummary = summarizePetPreferences(preferencesRef.current);
-    void getPetImprovisedLine(scene, localLine, memorySummary, preferenceSummary, options.userText)
-      .then((reply) => {
-        if (speechRequestRef.current !== requestId) return;
-        if (!canResolveNotice(noticeId)) return;
-        if (!settingsRef.current.speech_enabled) return;
-        if (actionRef.current === "sleep" || actionRef.current === "drag") return;
-        memoryRef.current = rememberPetEvent(memoryRef.current, scene, reply.line);
-        showPetNotice(reply.line, reply.mood, priorityForScene(scene), reply.action);
-      })
-      .catch(() => {
-        if (!canResolveNotice(noticeId)) return;
-        showAiFailureNotice(priorityForScene(scene));
-      });
+    setMood(moodForScene(scene));
   }
 
   function openChat() {
@@ -962,6 +1021,7 @@ export default function PetWindow() {
     transform: `translateX(-${(frame * 100) / actionSpec.frames}%)`,
   } as CSSProperties;
   const expression = MOOD_EXPRESSION[mood];
+  const hasNoticeAction = agentAction != null || socialAction != null;
 
   return (
     <div
@@ -974,7 +1034,28 @@ export default function PetWindow() {
       onPointerCancel={onPointerCancel}
     >
       <div className="pet-bubble-layer">
-        {bubble != null && <div className="pet-bubble">{bubble}</div>}
+        {bubble != null && (
+          <div className={"pet-bubble" + (hasNoticeAction ? " pet-bubble-actionable" : "")}>
+            <div className="pet-bubble-text">{bubble}</div>
+            {agentAction && (
+              <div className="pet-notify-actions" onPointerDown={(e) => e.stopPropagation()}>
+                <button className="pet-notify-btn primary" type="button" onClick={goToAgentNotifyTarget}>
+                  立即前往
+                </button>
+                <button className="pet-notify-btn" type="button" onClick={dismissAgentNotifyChoice}>
+                  稍后再说
+                </button>
+              </div>
+            )}
+            {socialAction && !agentAction && (
+              <div className="pet-notify-actions" onPointerDown={(e) => e.stopPropagation()}>
+                <button className="pet-notify-btn primary" type="button" onClick={dismissSocialNotifyChoice}>
+                  知道了
+                </button>
+              </div>
+            )}
+          </div>
+        )}
         {chatOpen && (
           <div className="pet-chat" onPointerDown={(e) => e.stopPropagation()}>
             <input

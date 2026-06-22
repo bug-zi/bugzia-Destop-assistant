@@ -9,6 +9,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use crate::social_notify::SocialNotifySettings;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager};
 
@@ -442,9 +443,9 @@ fn default_pet_speech_lines() -> Vec<String> {
         "做得不错。",
         "再陪我一会儿。",
     ]
-        .iter()
-        .map(|s| s.to_string())
-        .collect()
+    .iter()
+    .map(|s| s.to_string())
+    .collect()
 }
 
 fn default_pet_ai_idle_interval_ms() -> u32 {
@@ -641,6 +642,8 @@ pub struct AppSettings {
     pub note: NoteSettings,
     #[serde(default)]
     pub agent_notify: AgentNotifySettings,
+    #[serde(default)]
+    pub social_notify: SocialNotifySettings,
 }
 
 // ---------------------------------------------------------------------------
@@ -704,7 +707,9 @@ pub fn save_api_key(key: String) -> Result<(), String> {
     if key.is_empty() {
         return clear_api_key();
     }
-    keyring_entry()?.set_password(&key).map_err(|e| format!("set keyring: {e}"))
+    keyring_entry()?
+        .set_password(&key)
+        .map_err(|e| format!("set keyring: {e}"))
 }
 
 #[tauri::command]

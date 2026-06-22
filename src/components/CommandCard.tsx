@@ -408,6 +408,7 @@ export default function CommandCard() {
           pet: ev.payload.pet ?? cur.pet,
           note: ev.payload.note ?? cur.note,
           agent_notify: ev.payload.agent_notify ?? cur.agent_notify,
+          social_notify: ev.payload.social_notify ?? cur.social_notify,
         };
         update(merged);
         applyAppearanceVars(merged.appearance);
@@ -427,6 +428,12 @@ export default function CommandCard() {
     if (!cfg?.enabled) return;
     void invoke("agent_notify_start", { cfg }).catch(logErr("agent_notify_start"));
   }, [settings?.agent_notify.enabled]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    const cfg = settings?.social_notify;
+    if (!cfg) return;
+    void invoke("social_notify_start", { cfg }).catch(logErr("social_notify_start"));
+  }, [settings?.social_notify]);
 
   // ── result window -> main: chat control + lifecycle + ready-handshake ──
   useEffect(() => {

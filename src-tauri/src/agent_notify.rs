@@ -111,6 +111,7 @@ fn classify(source: &str, body: &Value, cfg: &NotifyConfig) -> Option<Value> {
 
 fn classify_claude(event: Option<&str>, body: &Value, cfg: &NotifyConfig) -> Option<Value> {
     let session = sid(body);
+    let cwd = cwd(body);
     match event {
         Some("Stop") => {
             // Non-empty background_tasks = paused (background work still running),
@@ -129,6 +130,7 @@ fn classify_claude(event: Option<&str>, body: &Value, cfg: &NotifyConfig) -> Opt
                     None,
                     None,
                     session,
+                    cwd.clone(),
                 ));
             }
             if !cfg.on_done {
@@ -141,13 +143,22 @@ fn classify_claude(event: Option<&str>, body: &Value, cfg: &NotifyConfig) -> Opt
                 summary_if(body, "last_assistant_message", cfg.show_content),
                 None,
                 session,
+                cwd.clone(),
             ))
         }
         Some("StopFailure") => {
             if !cfg.on_error {
                 return None;
             }
-            Some(build("claude", "error", "Claude 出错了", None, None, session))
+            Some(build(
+                "claude",
+                "error",
+                "Claude 出错了",
+                None,
+                None,
+                session,
+                cwd.clone(),
+            ))
         }
         Some("Notification") => {
             let nt = body.get("notification_type").and_then(|v| v.as_str());
@@ -169,6 +180,7 @@ fn classify_claude(event: Option<&str>, body: &Value, cfg: &NotifyConfig) -> Opt
                 summary_if(body, "message", cfg.show_content),
                 None,
                 session,
+                cwd.clone(),
             ))
         }
         _ => None,
@@ -177,6 +189,7 @@ fn classify_claude(event: Option<&str>, body: &Value, cfg: &NotifyConfig) -> Opt
 
 fn classify_codex(event: Option<&str>, body: &Value, cfg: &NotifyConfig) -> Option<Value> {
     let session = sid(body);
+    let cwd = cwd(body);
     // Codex `notify` program payload (argv JSON): type == agent-turn-complete.
     // Distinct from the hook payload (which carries hook_event_name on stdin).
     let notify_done = body
@@ -196,6 +209,7 @@ fn classify_codex(event: Option<&str>, body: &Value, cfg: &NotifyConfig) -> Opti
             summary_if(body, "last-assistant-message", cfg.show_content),
             None,
             session,
+            cwd.clone(),
         ));
     }
     match event {
@@ -210,6 +224,7 @@ fn classify_codex(event: Option<&str>, body: &Value, cfg: &NotifyConfig) -> Opti
                 summary_if(body, "last_assistant_message", cfg.show_content),
                 None,
                 session,
+                cwd.clone(),
             ))
         }
         Some("PermissionRequest") => {
@@ -231,6 +246,7 @@ fn classify_codex(event: Option<&str>, body: &Value, cfg: &NotifyConfig) -> Opti
                     .map(|s| truncate(s, 40)),
                 tool,
                 session,
+                cwd.clone(),
             ))
         }
         _ => None,
@@ -248,6 +264,7 @@ fn build(
     summary: Option<String>,
     tool: Option<String>,
     session: Option<String>,
+    cwd: Option<String>,
 ) -> Value {
     let mut obj = serde_json::Map::new();
     obj.insert("source".into(), json!(source));
@@ -261,6 +278,9 @@ fn build(
     }
     if let Some(sid) = session {
         obj.insert("sessionId".into(), json!(sid));
+    }
+    if let Some(cwd) = cwd {
+        obj.insert("cwd".into(), json!(cwd));
     }
     obj.insert("receivedAt".into(), json!(now_millis()));
     Value::Object(obj)
@@ -282,6 +302,13 @@ fn sid(body: &Value) -> Option<String> {
     body.get("session_id")
         .and_then(|v| v.as_str())
         .or_else(|| body.get("thread-id").and_then(|v| v.as_str()))
+        .map(|s| s.to_string())
+}
+
+fn cwd(body: &Value) -> Option<String> {
+    body.get("cwd")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.trim().is_empty())
         .map(|s| s.to_string())
 }
 
@@ -431,7 +458,10 @@ mod tests {
 
     #[test]
     fn parse_query_extracts_values() {
-        assert_eq!(parse_query("/agent-event?source=claude", "source"), Some("claude".into()));
+        assert_eq!(
+            parse_query("/agent-event?source=claude", "source"),
+            Some("claude".into())
+        );
         assert_eq!(parse_query("/x?a=1&b=2", "b"), Some("2".into()));
         assert_eq!(parse_query("/x", "source"), None);
     }

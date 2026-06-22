@@ -49,6 +49,7 @@ export default function SettingsWindow() {
         pet: next.pet,
         note: next.note,
         agent_notify: next.agent_notify,
+        social_notify: next.social_notify,
       });
     }, SAVE_DEBOUNCE_MS);
   }
@@ -75,6 +76,7 @@ export default function SettingsWindow() {
         pet: cur.pet,
         note: cur.note,
         agent_notify: cur.agent_notify,
+        social_notify: cur.social_notify,
       });
     }
     getCurrentWindow().close().catch((e) => console.error("[bugzia] close settings", e));

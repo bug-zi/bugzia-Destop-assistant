@@ -239,6 +239,18 @@ export interface AgentNotifySettings {
   only_unfocused: boolean;
 }
 
+export interface SocialNotifySettings {
+  /** Master on/off for Windows notification-center monitoring. */
+  enabled: boolean;
+  wechat: boolean;
+  qq: boolean;
+  dingtalk: boolean;
+  /** Backend cooldown (ms) between surfaced social notifications. */
+  cooldown_ms: number;
+  /** Include notification text from Windows notification center. */
+  show_content: boolean;
+}
+
 export interface AppSettings {
   appearance: AppearanceSettings;
   result: ResultAppearanceSettings;
@@ -250,6 +262,7 @@ export interface AppSettings {
   pet: PetSettings;
   note: NoteSettings;
   agent_notify: AgentNotifySettings;
+  social_notify: SocialNotifySettings;
 }
 
 export const DEFAULT_APPEARANCE: AppearanceSettings = {
@@ -386,6 +399,15 @@ export const DEFAULT_AGENT_NOTIFY: AgentNotifySettings = {
   only_unfocused: true,
 };
 
+export const DEFAULT_SOCIAL_NOTIFY: SocialNotifySettings = {
+  enabled: false,
+  wechat: true,
+  qq: true,
+  dingtalk: true,
+  cooldown_ms: 5000,
+  show_content: false,
+};
+
 export const DEFAULT_SETTINGS: AppSettings = {
   appearance: DEFAULT_APPEARANCE,
   result: DEFAULT_RESULT,
@@ -397,6 +419,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   pet: DEFAULT_PET,
   note: DEFAULT_NOTE,
   agent_notify: DEFAULT_AGENT_NOTIFY,
+  social_notify: DEFAULT_SOCIAL_NOTIFY,
 };
 
 /**
@@ -415,4 +438,5 @@ export interface SettingsPatch {
   pet: PetSettings;
   note: NoteSettings;
   agent_notify: AgentNotifySettings;
+  social_notify: SocialNotifySettings;
 }

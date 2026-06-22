@@ -35,6 +35,7 @@ export interface PetAgentNotify {
   summary?: string;
   tool?: string;
   sessionId?: string;
+  cwd?: string;
   /** epoch millis — set by the Rust receiver. */
   receivedAt: number;
 }

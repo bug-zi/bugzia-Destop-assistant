@@ -178,8 +178,11 @@ pub fn waveform_set_enabled(app: AppHandle, enabled: bool) {
 /// command has full window access regardless of the caller's ACL.
 #[tauri::command]
 pub fn waveform_set_locked(app: AppHandle, locked: bool) -> Result<(), String> {
-    let w = app.get_webview_window("waveform").ok_or("waveform window not found")?;
-    w.set_ignore_cursor_events(locked).map_err(|e| e.to_string())?;
+    let w = app
+        .get_webview_window("waveform")
+        .ok_or("waveform window not found")?;
+    w.set_ignore_cursor_events(locked)
+        .map_err(|e| e.to_string())?;
     let _ = app.emit("waveform://lock-changed", locked);
     Ok(())
 }
@@ -188,7 +191,9 @@ pub fn waveform_set_locked(app: AppHandle, locked: bool) -> Result<(), String> {
 /// `waveform_set_locked`.
 #[tauri::command]
 pub fn waveform_set_always_on_top(app: AppHandle, top: bool) -> Result<(), String> {
-    let w = app.get_webview_window("waveform").ok_or("waveform window not found")?;
+    let w = app
+        .get_webview_window("waveform")
+        .ok_or("waveform window not found")?;
     w.set_always_on_top(top).map_err(|e| e.to_string())?;
     Ok(())
 }
@@ -209,7 +214,9 @@ mod tests {
     #[test]
     fn rms_full_scale_saturates() {
         // +/-1.0 square -> RMS 1.0 -> *gain -> clamp 1.0 -> 1000.
-        let samples: Vec<f32> = (0..1024).map(|i| if i % 2 == 0 { 1.0 } else { -1.0 }).collect();
+        let samples: Vec<f32> = (0..1024)
+            .map(|i| if i % 2 == 0 { 1.0 } else { -1.0 })
+            .collect();
         assert_eq!(rms_level(&samples, |s| *s), 1000);
     }
 
@@ -221,8 +228,12 @@ mod tests {
     #[test]
     fn rms_int_formats_match_float() {
         // i16 max-amplitude samples convert to ~+/-1.0, matching the f32 square.
-        let i: Vec<i16> = (0..1024).map(|i| if i % 2 == 0 { i16::MAX } else { i16::MIN }).collect();
-        let f: Vec<f32> = (0..1024).map(|i| if i % 2 == 0 { 1.0 } else { -1.0 }).collect();
+        let i: Vec<i16> = (0..1024)
+            .map(|i| if i % 2 == 0 { i16::MAX } else { i16::MIN })
+            .collect();
+        let f: Vec<f32> = (0..1024)
+            .map(|i| if i % 2 == 0 { 1.0 } else { -1.0 })
+            .collect();
         assert_eq!(
             rms_level(&i, |s| *s as f32 / 32768.0),
             rms_level(&f, |s| *s)

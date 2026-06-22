@@ -403,6 +403,7 @@ dependencies = [
  "tauri-plugin-opener",
  "tiny_http",
  "trash",
+ "windows 0.56.0",
 ]
 
 [[package]]

@@ -84,14 +84,24 @@ pub async fn chat(
     let cfg = match crate::settings::load_settings(app.clone()) {
         Ok(c) => c,
         Err(e) => {
-            emit(&on_event, ChatEvent::Error { message: format!("读取设置失败: {e}") });
+            emit(
+                &on_event,
+                ChatEvent::Error {
+                    message: format!("读取设置失败: {e}"),
+                },
+            );
             return Ok(());
         }
     };
     let key = match crate::settings::load_api_key() {
         Ok(k) => k,
         Err(e) => {
-            emit(&on_event, ChatEvent::Error { message: format!("读取 API Key 失败: {e}") });
+            emit(
+                &on_event,
+                ChatEvent::Error {
+                    message: format!("读取 API Key 失败: {e}"),
+                },
+            );
             return Ok(());
         }
     };
@@ -140,7 +150,12 @@ pub async fn chat(
     {
         Ok(c) => c,
         Err(e) => {
-            emit(&on_event, ChatEvent::Error { message: format!("HTTP client 构建失败: {e}") });
+            emit(
+                &on_event,
+                ChatEvent::Error {
+                    message: format!("HTTP client 构建失败: {e}"),
+                },
+            );
             *state.abort.lock().unwrap() = None;
             return Ok(());
         }
@@ -154,7 +169,12 @@ pub async fn chat(
     {
         Ok(r) => r,
         Err(e) => {
-            emit(&on_event, ChatEvent::Error { message: format!("请求失败: {e}") });
+            emit(
+                &on_event,
+                ChatEvent::Error {
+                    message: format!("请求失败: {e}"),
+                },
+            );
             *state.abort.lock().unwrap() = None;
             return Ok(());
         }
@@ -164,7 +184,12 @@ pub async fn chat(
         let status = resp.status();
         let body_text = resp.text().await.unwrap_or_default();
         let snippet: String = body_text.chars().take(500).collect();
-        emit(&on_event, ChatEvent::Error { message: format!("HTTP {status}: {snippet}") });
+        emit(
+            &on_event,
+            ChatEvent::Error {
+                message: format!("HTTP {status}: {snippet}"),
+            },
+        );
         *state.abort.lock().unwrap() = None;
         return Ok(());
     }
@@ -225,7 +250,12 @@ pub async fn chat(
                     }
                     if let Some(t) = v["choices"][0]["delta"]["content"].as_str() {
                         assistant_text.push_str(t);
-                        emit(&on_event, ChatEvent::Delta { text: t.to_string() });
+                        emit(
+                            &on_event,
+                            ChatEvent::Delta {
+                                text: t.to_string(),
+                            },
+                        );
                     }
                 }
             }
@@ -246,7 +276,12 @@ pub async fn chat(
                 }
                 if let Some(t) = v["choices"][0]["message"]["content"].as_str() {
                     assistant_text = t.to_string();
-                    emit(&on_event, ChatEvent::Delta { text: assistant_text.clone() });
+                    emit(
+                        &on_event,
+                        ChatEvent::Delta {
+                            text: assistant_text.clone(),
+                        },
+                    );
                 } else {
                     emit(
                         &on_event,
@@ -259,7 +294,12 @@ pub async fn chat(
                 }
             }
             Err(e) => {
-                emit(&on_event, ChatEvent::Error { message: format!("解析响应失败: {e}") });
+                emit(
+                    &on_event,
+                    ChatEvent::Error {
+                        message: format!("解析响应失败: {e}"),
+                    },
+                );
                 *state.abort.lock().unwrap() = None;
                 return Ok(());
             }
@@ -273,14 +313,22 @@ pub async fn chat(
         if let Ok(v) = serde_json::from_slice::<Value>(&raw_all) {
             if let Some(t) = v["choices"][0]["message"]["content"].as_str() {
                 assistant_text = t.to_string();
-                emit(&on_event, ChatEvent::Delta { text: assistant_text.clone() });
+                emit(
+                    &on_event,
+                    ChatEvent::Delta {
+                        text: assistant_text.clone(),
+                    },
+                );
             }
         }
     }
 
     // Still nothing -> surface a diagnostic so we can see what the server sent.
     if assistant_text.is_empty() {
-        let snippet: String = String::from_utf8_lossy(&raw_all).chars().take(300).collect();
+        let snippet: String = String::from_utf8_lossy(&raw_all)
+            .chars()
+            .take(300)
+            .collect();
         *state.abort.lock().unwrap() = None;
         emit(
             &on_event,
@@ -471,14 +519,24 @@ pub async fn ask_once_stream(
     let cfg = match crate::settings::load_settings(app.clone()) {
         Ok(c) => c,
         Err(e) => {
-            emit(&on_event, ChatEvent::Error { message: format!("读取设置失败: {e}") });
+            emit(
+                &on_event,
+                ChatEvent::Error {
+                    message: format!("读取设置失败: {e}"),
+                },
+            );
             return Ok(());
         }
     };
     let key = match crate::settings::load_api_key() {
         Ok(k) => k,
         Err(e) => {
-            emit(&on_event, ChatEvent::Error { message: format!("读取 API Key 失败: {e}") });
+            emit(
+                &on_event,
+                ChatEvent::Error {
+                    message: format!("读取 API Key 失败: {e}"),
+                },
+            );
             return Ok(());
         }
     };
@@ -517,7 +575,12 @@ pub async fn ask_once_stream(
     {
         Ok(c) => c,
         Err(e) => {
-            emit(&on_event, ChatEvent::Error { message: format!("HTTP client 构建失败: {e}") });
+            emit(
+                &on_event,
+                ChatEvent::Error {
+                    message: format!("HTTP client 构建失败: {e}"),
+                },
+            );
             *state.abort.lock().unwrap() = None;
             return Ok(());
         }
@@ -531,7 +594,12 @@ pub async fn ask_once_stream(
     {
         Ok(r) => r,
         Err(e) => {
-            emit(&on_event, ChatEvent::Error { message: format!("请求失败: {e}") });
+            emit(
+                &on_event,
+                ChatEvent::Error {
+                    message: format!("请求失败: {e}"),
+                },
+            );
             *state.abort.lock().unwrap() = None;
             return Ok(());
         }
@@ -541,7 +609,12 @@ pub async fn ask_once_stream(
         let status = resp.status();
         let body_text = resp.text().await.unwrap_or_default();
         let snippet: String = body_text.chars().take(500).collect();
-        emit(&on_event, ChatEvent::Error { message: format!("HTTP {status}: {snippet}") });
+        emit(
+            &on_event,
+            ChatEvent::Error {
+                message: format!("HTTP {status}: {snippet}"),
+            },
+        );
         *state.abort.lock().unwrap() = None;
         return Ok(());
     }
@@ -600,7 +673,12 @@ pub async fn ask_once_stream(
                     }
                     if let Some(t) = v["choices"][0]["delta"]["content"].as_str() {
                         assistant_text.push_str(t);
-                        emit(&on_event, ChatEvent::Delta { text: t.to_string() });
+                        emit(
+                            &on_event,
+                            ChatEvent::Delta {
+                                text: t.to_string(),
+                            },
+                        );
                     }
                 }
             }
@@ -621,7 +699,12 @@ pub async fn ask_once_stream(
                 }
                 if let Some(t) = v["choices"][0]["message"]["content"].as_str() {
                     assistant_text = t.to_string();
-                    emit(&on_event, ChatEvent::Delta { text: assistant_text.clone() });
+                    emit(
+                        &on_event,
+                        ChatEvent::Delta {
+                            text: assistant_text.clone(),
+                        },
+                    );
                 } else {
                     emit(
                         &on_event,
@@ -634,7 +717,12 @@ pub async fn ask_once_stream(
                 }
             }
             Err(e) => {
-                emit(&on_event, ChatEvent::Error { message: format!("解析响应失败: {e}") });
+                emit(
+                    &on_event,
+                    ChatEvent::Error {
+                        message: format!("解析响应失败: {e}"),
+                    },
+                );
                 *state.abort.lock().unwrap() = None;
                 return Ok(());
             }
@@ -648,14 +736,22 @@ pub async fn ask_once_stream(
         if let Ok(v) = serde_json::from_slice::<Value>(&raw_all) {
             if let Some(t) = v["choices"][0]["message"]["content"].as_str() {
                 assistant_text = t.to_string();
-                emit(&on_event, ChatEvent::Delta { text: assistant_text.clone() });
+                emit(
+                    &on_event,
+                    ChatEvent::Delta {
+                        text: assistant_text.clone(),
+                    },
+                );
             }
         }
     }
 
     // Still nothing -> surface a diagnostic so we can see what the server sent.
     if assistant_text.is_empty() {
-        let snippet: String = String::from_utf8_lossy(&raw_all).chars().take(300).collect();
+        let snippet: String = String::from_utf8_lossy(&raw_all)
+            .chars()
+            .take(300)
+            .collect();
         *state.abort.lock().unwrap() = None;
         emit(
             &on_event,
@@ -733,7 +829,10 @@ pub async fn test_ai_connection(
         });
     }
 
-    let client = match reqwest::Client::builder().connect_timeout(CONNECT_TIMEOUT).build() {
+    let client = match reqwest::Client::builder()
+        .connect_timeout(CONNECT_TIMEOUT)
+        .build()
+    {
         Ok(c) => c,
         Err(e) => {
             return Ok(TestResult {

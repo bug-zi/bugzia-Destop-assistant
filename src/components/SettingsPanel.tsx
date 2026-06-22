@@ -8,6 +8,7 @@ import type {
   PetSettings,
   ResultAppearanceSettings,
   SearchSettings,
+  SocialNotifySettings,
   WaveformSettings,
   WindowSettings,
 } from "../features/settings/settingsTypes";
@@ -43,6 +44,8 @@ export default function SettingsPanel({ settings, onChange, onClose }: SettingsP
     onChange({ ...settings, note: { ...settings.note, ...p } });
   const patchAgentNotify = (p: Partial<AgentNotifySettings>) =>
     onChange({ ...settings, agent_notify: { ...settings.agent_notify, ...p } });
+  const patchSocialNotify = (p: Partial<SocialNotifySettings>) =>
+    onChange({ ...settings, social_notify: { ...settings.social_notify, ...p } });
 
   // API key lives in the OS keyring, separate from the JSON settings, so it has
   // its own local state + explicit save.
@@ -149,6 +152,7 @@ export default function SettingsPanel({ settings, onChange, onClose }: SettingsP
   const pet = settings.pet;
   const n = settings.note;
   const an = settings.agent_notify;
+  const sn = settings.social_notify;
 
   return (
     <div className="settings-overlay" onClick={onClose}>
@@ -576,6 +580,56 @@ export default function SettingsPanel({ settings, onChange, onClose }: SettingsP
             </label>
             <div className="hint">
               事件由 Claude Code / Codex 的 hook POST 到本机此端口；运行中开启会立即生效，改端口或 token 需重启应用生效。hook 配置见 docs/agent-notify/。
+            </div>
+          </section>
+
+          <section className="settings-section">
+            <h4>社交通知</h4>
+            <label className="check-row">
+              <input
+                type="checkbox"
+                checked={sn.enabled}
+                onChange={(e) => patchSocialNotify({ enabled: e.target.checked })}
+              />
+              启用（监听 Windows 通知中心里的微信 / QQ / 钉钉提醒）
+            </label>
+            <label className="check-row">
+              <input
+                type="checkbox"
+                checked={sn.wechat}
+                onChange={(e) => patchSocialNotify({ wechat: e.target.checked })}
+              />
+              微信
+            </label>
+            <label className="check-row">
+              <input
+                type="checkbox"
+                checked={sn.qq}
+                onChange={(e) => patchSocialNotify({ qq: e.target.checked })}
+              />
+              QQ
+            </label>
+            <label className="check-row">
+              <input
+                type="checkbox"
+                checked={sn.dingtalk}
+                onChange={(e) => patchSocialNotify({ dingtalk: e.target.checked })}
+              />
+              钉钉
+            </label>
+            <ColorRow label="冷却" value={sn.cooldown_ms} min={0} max={60000} step={1000}
+              fmt={(v) => (v <= 0 ? "关" : `${(v / 1000).toFixed(0)}s`)}
+              onChange={(v) => patchSocialNotify({ cooldown_ms: v })} />
+            <label className="check-row">
+              <input
+                type="checkbox"
+                checked={sn.show_content}
+                onChange={(e) => patchSocialNotify({ show_content: e.target.checked })}
+              />
+              气泡含通知文字（会带出消息摘要，注意隐私）
+            </label>
+            <div className="hint">
+              使用 Windows 通知中心权限；首次启用可能弹出系统授权。只有对应软件向系统通知中心发送提醒时，桌宠才能收到。
             </div>
           </section>
         </div>

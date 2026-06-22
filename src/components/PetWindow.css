@@ -12,7 +12,7 @@
   justify-content: center;
   background: transparent;
   cursor: grab;
-  --bubble-h: 76px;
+  --bubble-h: 106px;
   --bubble-bg: rgba(255, 255, 255, 0.94);
   --bubble-fg: #5a3b46;
   --bubble-border: rgba(90, 59, 70, 0.12);
@@ -175,6 +175,56 @@
   box-shadow: var(--bubble-shadow);
   animation: pet-pop 0.25s ease-out;
   pointer-events: none;
+}
+
+.pet-bubble-actionable {
+  min-width: 170px;
+  padding: 7px 9px 8px;
+  pointer-events: auto;
+}
+
+.pet-bubble-text {
+  overflow-wrap: anywhere;
+}
+
+.pet-notify-actions {
+  display: flex;
+  justify-content: center;
+  flex-wrap: nowrap;
+  gap: 6px;
+  margin-top: 7px;
+}
+
+.pet-notify-btn {
+  appearance: none;
+  flex: 0 0 auto;
+  min-width: 64px;
+  height: 24px;
+  padding: 0 8px;
+  border: 1px solid rgba(113, 50, 70, 0.18);
+  border-radius: 999px;
+  color: #713246;
+  background: rgba(255, 255, 255, 0.72);
+  box-shadow: 0 2px 5px rgba(65, 28, 43, 0.12);
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.pet-notify-btn:hover {
+  background: rgba(255, 247, 250, 0.98);
+  border-color: rgba(181, 47, 89, 0.32);
+}
+
+.pet-notify-btn.primary {
+  color: #fff7fa;
+  background: rgba(181, 47, 89, 0.86);
+  border-color: rgba(181, 47, 89, 0.42);
+}
+
+.pet-notify-btn.primary:hover {
+  background: rgba(157, 38, 78, 0.94);
 }
 
 .pet-mood-pleased {

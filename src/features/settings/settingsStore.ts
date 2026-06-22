@@ -17,6 +17,7 @@ export async function loadSettings(): Promise<AppSettings> {
       pet: { ...DEFAULT_SETTINGS.pet, ...s.pet },
       note: { ...DEFAULT_SETTINGS.note, ...s.note },
       agent_notify: { ...DEFAULT_SETTINGS.agent_notify, ...s.agent_notify },
+      social_notify: { ...DEFAULT_SETTINGS.social_notify, ...s.social_notify },
     };
   } catch (e) {
     console.error("[bugzia] load_settings failed", e);

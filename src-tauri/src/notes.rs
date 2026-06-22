@@ -97,7 +97,6 @@ pub fn notes_load(app: AppHandle) -> Result<Vec<NoteRecord>, String> {
 pub fn notes_save(app: AppHandle, notes: Vec<NoteRecord>) -> Result<(), String> {
     let path = notes_path(&app)?;
     let file = NotesFile { notes };
-    let data =
-        serde_json::to_string_pretty(&file).map_err(|e| format!("serialize notes: {e}"))?;
+    let data = serde_json::to_string_pretty(&file).map_err(|e| format!("serialize notes: {e}"))?;
     atomic_write(&path, &data)
 }
