@@ -104,8 +104,14 @@ const ACTIONS: Record<PetAction, ActionSpec> = {
   wave: { src: waveSheetSrc, frames: 5, fps: 12, loop: false, next: "idle" },
 };
 const DOUBLE_CLICK_MS = 320;
-const AUTO_SLEEP_MS = 45_000;
+const AUTO_SLEEP_MS = 6 * 60_000;
 const SLEEP_CHECK_MS = 5_000;
+const SLEEP_GRACE_AFTER_WAKE_MS = 2 * 60_000;
+const RECENT_SPEECH_SLEEP_BLOCK_MS = 60_000;
+const LEGACY_SPEECH_INTERVAL_MS = 20_000;
+const ACTIVE_SPEECH_INTERVAL_MS = 12_000;
+const LEGACY_AI_IDLE_INTERVAL_MS = 90_000;
+const ACTIVE_AI_IDLE_INTERVAL_MS = 60_000;
 const INPUT_REACTION_MIN_INTERVAL_MS = 3_000;
 const BUBBLE_TTL_MS = 2_500;
 const AI_FAILURE_NOTICE_MIN_INTERVAL_MS = 30_000;
@@ -225,12 +231,15 @@ export default function PetWindow() {
   const settingsRef = useRef<PetSettings>(DEFAULT_PET);
   const actionRef = useRef<PetAction>("idle");
   const lastInteractionRef = useRef(Date.now());
+  const lastPetSpeechAtRef = useRef(0);
+  const lastWakeAtRef = useRef(0);
   const lastClickAtRef = useRef(0);
   const lastAiSpeechAtRef = useRef(0);
   const lastAiFailureNoticeAtRef = useRef(0);
   const lastInputReactionAtRef = useRef(0);
   const lastInputReactionTextRef = useRef("");
   const chatRequestRef = useRef(0);
+  const speechRequestRef = useRef(0);
   const dragSessionRef = useRef(0);
   const dragPollTimerRef = useRef<number | null>(null);
   const noticeIdRef = useRef(0);
@@ -386,7 +395,9 @@ export default function PetWindow() {
   // Idle random-speech timer.
   useEffect(() => {
     if (!settings.speech_enabled) return;
-    const iv = settings.speech_interval_ms;
+    const iv = settings.speech_interval_ms === LEGACY_SPEECH_INTERVAL_MS
+      ? ACTIVE_SPEECH_INTERVAL_MS
+      : settings.speech_interval_ms;
     if (!iv || iv <= 0) return;
     const lines = settings.speech_lines ?? [];
     let stopped = false;
@@ -396,7 +407,8 @@ export default function PetWindow() {
     const schedule = (delay: number) => {
       timer = window.setTimeout(() => {
         if (stopped) return;
-        if (actionRef.current !== "sleep" && actionRef.current !== "drag") {
+        const idleMs = Date.now() - lastInteractionRef.current;
+        if (idleMs < AUTO_SLEEP_MS && actionRef.current !== "sleep" && actionRef.current !== "drag") {
           speak("idle", {
             extraLines: lines,
             improvise: true,
@@ -464,13 +476,24 @@ export default function PetWindow() {
   useEffect(() => {
     const timer = window.setInterval(() => {
       if (settingsRef.current.locked) return;
-      if (actionRef.current === "idle" && Date.now() - lastInteractionRef.current > AUTO_SLEEP_MS) {
+      const now = Date.now();
+      const hasActiveNotice = activeNoticeRef.current != null && activeNoticeRef.current.expiresAt > now;
+      const canSleep =
+        actionRef.current === "idle" &&
+        !hasActiveNotice &&
+        !chatOpen &&
+        !dragOver &&
+        !chatPending &&
+        now - lastInteractionRef.current > AUTO_SLEEP_MS &&
+        now - lastWakeAtRef.current > SLEEP_GRACE_AFTER_WAKE_MS &&
+        now - lastPetSpeechAtRef.current > RECENT_SPEECH_SLEEP_BLOCK_MS;
+      if (canSleep) {
         dispatch({ type: "sleep" });
         speak("sleepStart");
       }
     }, SLEEP_CHECK_MS);
     return () => window.clearInterval(timer);
-  }, []);
+  }, [chatOpen, chatPending, dragOver]);
 
   // Click vs drag disambiguation (no data-tauri-drag-region — it eats clicks).
   const dragState = useRef<{
@@ -538,6 +561,7 @@ export default function PetWindow() {
   function noteInteraction() {
     lastInteractionRef.current = Date.now();
     if (actionRef.current === "sleep") {
+      lastWakeAtRef.current = Date.now();
       dispatch({ type: "wake" });
       speak("wake");
     }
@@ -567,6 +591,7 @@ export default function PetWindow() {
       expiresAt: ttlMs == null ? Number.POSITIVE_INFINITY : now + ttlMs,
     };
     if (aiAction) applyAiAction(aiAction);
+    lastPetSpeechAtRef.current = now;
     setMood(moodValue);
     setBubble(line);
     return id;
@@ -814,6 +839,29 @@ export default function PetWindow() {
     }
   }
 
+  function localActionForScene(scene: PetSpeechScene, line: string): PetAiAction | undefined {
+    if (scene !== "idle" || actionRef.current !== "idle") return undefined;
+    if (/不错|优雅|陪我/u.test(line)) return "happy";
+    if (/发呆|继续|专心|等/u.test(line)) return "curious";
+    if (/脆弱|浪费/u.test(line)) return "mocking";
+    return undefined;
+  }
+
+  function priorityForScene(scene: PetSpeechScene): PetNoticePriority {
+    switch (scene) {
+      case "idle":
+        return "ambient";
+      case "inputPreview":
+      case "feedingHover":
+        return "input";
+      case "sleepStart":
+      case "wake":
+        return "system";
+      default:
+        return "interaction";
+    }
+  }
+
   /** "Eat" dropped files: send them to the OS recycle bin and react happily.
    *  Uses local lines via speak() so the feeding is remembered in memory, with no
    *  AI latency. */
@@ -848,7 +896,36 @@ export default function PetWindow() {
     if (!settingsRef.current.speech_enabled) return;
     const localLine = getPetLine(scene, options.extraLines);
     memoryRef.current = rememberPetEvent(memoryRef.current, scene, localLine);
-    setMood(moodForScene(scene));
+    const localAction = localActionForScene(scene, localLine);
+    const noticeId = showPetNotice(localLine, moodForScene(scene), priorityForScene(scene), localAction);
+    if (noticeId == null) return;
+
+    if (!options.improvise || !settingsRef.current.ai_speech_enabled) return;
+    const now = Date.now();
+    const configuredInterval = options.minAiIntervalMs ?? settingsRef.current.ai_interaction_interval_ms;
+    const minInterval = scene === "idle" && configuredInterval === LEGACY_AI_IDLE_INTERVAL_MS
+      ? ACTIVE_AI_IDLE_INTERVAL_MS
+      : configuredInterval;
+    if (now - lastAiSpeechAtRef.current < minInterval) return;
+    if (actionRef.current === "sleep" || actionRef.current === "drag") return;
+
+    lastAiSpeechAtRef.current = now;
+    const requestId = ++speechRequestRef.current;
+    const memorySummary = summarizePetMemory(memoryRef.current);
+    const preferenceSummary = summarizePetPreferences(preferencesRef.current);
+    void getPetImprovisedLine(scene, localLine, memorySummary, preferenceSummary, options.userText)
+      .then((reply) => {
+        if (speechRequestRef.current !== requestId) return;
+        if (!canResolveNotice(noticeId)) return;
+        if (!settingsRef.current.speech_enabled) return;
+        if (actionRef.current === "sleep" || actionRef.current === "drag") return;
+        memoryRef.current = rememberPetEvent(memoryRef.current, scene, reply.line);
+        showPetNotice(reply.line, reply.mood, priorityForScene(scene), reply.action);
+      })
+      .catch(() => {
+        if (!canResolveNotice(noticeId)) return;
+        showAiFailureNotice(priorityForScene(scene));
+      });
   }
 
   function openChat() {

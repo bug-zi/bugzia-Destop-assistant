@@ -449,7 +449,7 @@ fn default_pet_speech_lines() -> Vec<String> {
 }
 
 fn default_pet_ai_idle_interval_ms() -> u32 {
-    90000
+    60000
 }
 
 fn default_pet_ai_interaction_interval_ms() -> u32 {
@@ -465,7 +465,7 @@ impl Default for PetSettings {
             scale: 1.0,
             blink_interval_ms: 4000,
             speech_enabled: true,
-            speech_interval_ms: 20000,
+            speech_interval_ms: 12000,
             ai_speech_enabled: true,
             ai_idle_interval_ms: default_pet_ai_idle_interval_ms(),
             ai_interaction_interval_ms: default_pet_ai_interaction_interval_ms(),

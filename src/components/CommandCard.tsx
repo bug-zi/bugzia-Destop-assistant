@@ -640,6 +640,25 @@ export default function CommandCard() {
     );
   }, [settings?.waveform.locked, settings?.waveform.enabled]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Sticky lock re-assertion. On Windows, set_ignore_cursor_events is silently
+  // reset by later window operations (show, z-order / always-on-top, window
+  // reactivation), so a one-shot apply-after-show can lose that race and leave a
+  // locked=true overlay still interactive (the "lock never takes effect" bug).
+  // While the overlay is enabled, re-apply its saved lock state on a
+  // low-frequency interval from this main window (which has full invoke
+  // access), so the lock stays sticky no matter which op last touched the
+  // window. Idempotent with the apply-after-show in showWaveformWindow.
+  useEffect(() => {
+    if (!settings?.waveform.enabled) return;
+    const apply = () => {
+      const locked = settingsRef.current?.waveform.locked ?? false;
+      void invoke("waveform_set_locked", { locked }).catch(logErr("waveform sticky lock"));
+    };
+    apply();
+    const id = window.setInterval(apply, 1000);
+    return () => window.clearInterval(id);
+  }, [settings?.waveform.enabled]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // "重置位置" resets x/y to the -1 sentinel -> while open, re-default the
   // placement immediately so the user sees it move (not only on next toggle).
   useEffect(() => {

@@ -27,7 +27,6 @@
     ],
     "Notification": [
       {
-        "matcher": "permission_prompt|idle_prompt|elicitation_dialog",
         "hooks": [
           {
             "type": "command",
@@ -58,7 +57,7 @@
 ## 事件含义（确认你理解后再动手）
 
 - `Stop`：你回答完毕、回合结束时触发。payload 带 `last_assistant_message` 和 `background_tasks`（非空=还有后台任务在跑，桌宠会据此区分「真空闲」和「暂停等后台」）。注意：`Stop` 不支持 matcher；`Stop` 的 exit 2 会让 Claude 继续对话——所以命令末尾必须 `|| true` 保证 exit 0，绝不能干扰你的正常停止。
-- `Notification`：你发出通知时触发。matcher 限定在 `permission_prompt`（需要授权）、`idle_prompt`（闲置等待）、`elicitation_dialog`（需要用户填空）这几种「需要用户」的场景。`Notification` 不能阻塞，只做副作用。
+- `Notification`：你发出通知时触发。**不配 matcher，转发所有通知**——不同版本 Claude Code 对 `Notification` 的 matcher 语义不一致，配了反而可能让 hook 永不触发。Bugzia 侧的分类器会只保留 `permission_prompt`（需要授权）、`idle_prompt`（闲置等待）、`elicitation_dialog`（需要用户填空）这三种「需要用户」的场景，其余类型直接丢弃，不会误报。`Notification` 不能阻塞，只做副作用。
 - 通用 payload 字段：`session_id`、`transcript_path`、`cwd`、`hook_event_name`。
 
 ## 关键约束

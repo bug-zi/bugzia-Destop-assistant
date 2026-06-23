@@ -74,11 +74,13 @@ timeout = 10
 
 ## 事件含义（确认理解后再动手）
 
-- `notify`：目前 Codex 只对 `agent-turn-complete`（一个回合结束 / agent 停下等待）触发。payload 字段：`type`、`thread-id`、`turn-id`、`cwd`、`input-messages`、`last-assistant-message`。这对应桌宠的「done」。
+- `notify`：目前 Codex 只对 `agent-turn-complete`（一个回合结束 / agent 停下等待）触发。payload 字段：`type`、`thread-id`、`turn-id`、`cwd`、`input-messages`、`last-assistant-message`。注意这是一个**回合边界**信号：Codex 停在一步、停下来问你问题、被打断、被限流时都会触发，**并不代表任务成功完成**。Codex 没有可靠的「任务完成」事件，所以桌宠把它按「到一个回合了，去看看」处理（curious / paused），对应桌宠的「paused」，而**不是**「done」。别把它当成「完成」来理解。
 - `PermissionRequest`：当 Codex **即将向用户请求批准**（shell 提权、受管网络批准等）时触发；对不需要批准的命令不触发。payload 带 `tool_name`、`tool_input`、`hook_event_name="PermissionRequest"`。我们只把 payload 转发给 Bugzia，**不返回任何 decision**，于是 Codex 照常走它原本的审批弹窗——桌宠只是多嘴提醒一句「Codex 需要你批准」。这对应桌宠的「needs」。
 - 因此「需要你确认」的覆盖范围取决于你的 `approval_policy`：如果你的策略很少需要批准，needs 通知就少；这是符合预期的。
 
 ## 关键约束
+
+- **`notify` 与 `Stop` hook 二选一，不要同时配。** 两者在每个回合结束都会触发，同时配置会在同一回合重复 POST（虽有冷却去重，仍属多余）。本机当前 `config.toml` 同时配了 `notify` 和 `Stop` hook，建议保留 `notify`、删掉 `Stop` hook（或反之）。
 
 - 两个脚本都必须 `exit 0`，且不往 stdout 打印业务文本。
   - `notify` 脚本：stdout 会被 Codex 忽略，但仍建议保持干净。
@@ -104,7 +106,7 @@ command = 'powershell -NoProfile -ExecutionPolicy Bypass -File "C:\Users\<你>\.
 timeout = 10
 ```
 
-推荐仍用 `notify`（语义清晰、无 stdout JSON 陷阱），`Stop` hook 作为备选。
+推荐仍用 `notify`（语义清晰、无 stdout JSON 陷阱），`Stop` hook 作为备选。**注意：二选一，别同时配。**
 
 ## macOS / Linux 变体（本机用不到，备查）
 
@@ -141,7 +143,7 @@ timeout = 10
 ## 验证
 
 1. 让 Bugzia 处于运行 + Agent 通知已开启状态。
-2. 跑一个短回合，结束时桌宠应弹出「Codex 完成了回合」之类气泡并切 happy 动作（done）。
+2. 跑一个短回合，结束时桌宠应弹出「Codex 停下来了，去看看」之类气泡并切 curious 动作（paused，注意不是「完成」——Codex 回合结束只是回合边界）。
 3. 触发一次需要批准的操作，桌宠应弹出「Codex 需要你批准」之类气泡并切 surprise 动作（needs），同时 Codex 自己的审批弹窗照常出现（我们没替它做决定）。
 4. 关掉 Bugzia 再跑一次，确认 Codex 正常工作（请求失败被静默吞掉，回合/审批不受影响）。
 5. 用 `/hooks` 确认 hook 状态为已信任。

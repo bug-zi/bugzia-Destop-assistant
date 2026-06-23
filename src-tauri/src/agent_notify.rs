@@ -192,6 +192,14 @@ fn classify_codex(event: Option<&str>, body: &Value, cfg: &NotifyConfig) -> Opti
     let cwd = cwd(body);
     // Codex `notify` program payload (argv JSON): type == agent-turn-complete.
     // Distinct from the hook payload (which carries hook_event_name on stdin).
+    //
+    // NOTE: both `agent-turn-complete` and the `Stop` hook fire at every TURN
+    // BOUNDARY — including when Codex merely pauses to ask the user a question,
+    // stops between steps, gets interrupted, or rate-limits. They do NOT mean
+    // the task succeeded. Codex gives no reliable "task complete" signal, so we
+    // surface these as `paused` ("Codex stopped, go check") rather than a
+    // celebratory `done`, which would falsely claim the task finished. Mirrors
+    // the Claude-side `paused` handling for an ambiguous Stop.
     let notify_done = body
         .get("type")
         .and_then(|v| v.as_str())
@@ -203,8 +211,8 @@ fn classify_codex(event: Option<&str>, body: &Value, cfg: &NotifyConfig) -> Opti
         }
         return Some(build(
             "codex",
-            "done",
-            "Codex 完成了回合",
+            "paused",
+            "Codex 停下来了，去看看",
             // Codex notify uses a hyphenated key for the last message.
             summary_if(body, "last-assistant-message", cfg.show_content),
             None,
@@ -219,8 +227,8 @@ fn classify_codex(event: Option<&str>, body: &Value, cfg: &NotifyConfig) -> Opti
             }
             Some(build(
                 "codex",
-                "done",
-                "Codex 完成了回合",
+                "paused",
+                "Codex 停下来了，去看看",
                 summary_if(body, "last_assistant_message", cfg.show_content),
                 None,
                 session,
@@ -409,16 +417,31 @@ mod tests {
     }
 
     #[test]
-    fn codex_notify_turn_complete_classifies() {
+    fn codex_notify_turn_complete_is_paused() {
+        // agent-turn-complete fires at every turn boundary (including when Codex
+        // pauses to ask a question), not on task success -> classified paused.
         let body = serde_json::json!({
             "type": "agent-turn-complete",
             "thread-id": "t1",
             "last-assistant-message": "ok"
         });
-        let p = classify("codex", &body, &cfg(true)).expect("done");
-        assert_eq!(p["kind"], "done");
+        let p = classify("codex", &body, &cfg(true)).expect("paused");
+        assert_eq!(p["kind"], "paused");
         assert_eq!(p["summary"], "ok");
         assert_eq!(p["sessionId"], "t1"); // thread-id fallback
+    }
+
+    #[test]
+    fn codex_stop_is_paused() {
+        // Stop hook likewise fires at every turn boundary -> paused, never done.
+        let body = serde_json::json!({
+            "hook_event_name": "Stop",
+            "session_id": "c2",
+            "last_assistant_message": "step done"
+        });
+        let p = classify("codex", &body, &cfg(true)).expect("paused");
+        assert_eq!(p["kind"], "paused");
+        assert_eq!(p["sessionId"], "c2");
     }
 
     #[test]

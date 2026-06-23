@@ -59,10 +59,12 @@ export type PetAgentNotify = {
 | claude | `hook_event_name === "Stop"` 且 `background_tasks` 非空 | paused | Claude 还在后台跑 | 无 |
 | claude | `hook_event_name === "StopFailure"` | error | Claude 出错了 | 无 |
 | claude | `hook_event_name === "Notification"` 且 `notification_type` ∈ {`permission_prompt`, `idle_prompt`, `elicitation_dialog`} | needs | `title` 或 "Claude 需要你确认" | `message` |
-| codex | `type === "agent-turn-complete"`（notify） | done | Codex 完成了回合 | `last-assistant-message` 片段 |
-| codex | `hook_event_name === "Stop"` | done | Codex 完成了回合 | `last_assistant_message` 片段 |
+| codex | `type === "agent-turn-complete"`（notify） | paused | Codex 停下来了，去看看 | `last-assistant-message` 片段 |
+| codex | `hook_event_name === "Stop"` | paused | Codex 停下来了，去看看 | `last_assistant_message` 片段 |
 | codex | `hook_event_name === "PermissionRequest"` | needs | Codex 需要你批准 | `tool_input.description`，`tool` = `tool_name` |
 | 其他 | 不识别 | （忽略，不 emit） | | |
+
+> Codex 的 `agent-turn-complete` 与 `Stop` 都是**回合边界**信号：停在一步、停下来问你问题、被打断、被限流时都会触发，并不代表任务成功完成；Codex 没有可靠的「任务完成」事件，因此一律按 `paused` 处理（去确认），而非庆祝式的 `done`。Claude 的 `Stop` 才能凭 `background_tasks` 区分空闲（done）与「还在后台跑」（paused）。
 
 处理约束：
 

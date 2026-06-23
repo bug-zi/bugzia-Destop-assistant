@@ -13,13 +13,15 @@ export type PetAgentNotifySource = "claude" | "codex";
 
 /**
  * Normalized event kind. Frontend mirror of what `agent_notify.rs` emits:
- * - done    — a turn finished cleanly (Claude Stop w/ no pending tasks;
- *             Codex agent-turn-complete / Stop).
+ * - done    — a turn finished cleanly (Claude Stop with no pending tasks only).
  * - needs   — the agent wants the user (Claude Notification permission/idle/
  *             elicitation; Codex PermissionRequest).
  * - error   — the agent errored (Claude StopFailure).
- * - paused  — Claude stopped but still has pending background tasks (the user
- *             may need to nudge it to continue). Codex never emits this.
+ * - paused  — the agent stopped at a turn boundary the user should check:
+ *             Claude Stop with pending background tasks, OR any Codex turn end
+ *             (agent-turn-complete / Stop). Codex's turn-end events fire at
+ *             every pause — including mid-task questions — and carry no reliable
+ *             "task complete" signal, so they surface as paused, not done.
  */
 export type PetAgentNotifyKind = "done" | "needs" | "error" | "paused";
 
@@ -91,7 +93,9 @@ const AGENT_NOTIFY_LINES: Record<PetAgentNotifySource, Record<PetAgentNotifyKind
       "Codex 报错了，去瞧瞧。",
     ],
     paused: [
-      "Codex 暂停了，似乎没做完。",
+      "Codex 停下来了，去看看情况。",
+      "Codex 到一个回合了，做完没有自己确认。",
+      "Codex 暂停了，是在等你还是在收尾？",
     ],
   },
 };

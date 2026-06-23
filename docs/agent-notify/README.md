@@ -49,7 +49,11 @@ Claude Code / Codex  --(hook/notify 触发)--> curl / PowerShell --POST--> Bugzi
 
 | 用户感知 | Claude Code 信号 | Codex 信号 | 桌宠动作 |
 | --- | --- | --- | --- |
-| 干完活了 / 空闲 | `Stop`（无后台任务） | `notify` 的 `agent-turn-complete` 或 `Stop` hook | happy + pleased |
-| 还在后台跑 | `Stop`（`background_tasks` 非空） | （Codex 无对应） | idle + neutral |
+| 干完活了 / 空闲 | `Stop`（无后台任务） | （无可靠「任务完成」信号） | happy + pleased |
+| 到一个回合了，去看看 | `Stop`（`background_tasks` 非空） | `notify` 的 `agent-turn-complete` 或 `Stop` hook | curious（去确认） |
 | 需要你确认 | `Notification`（permission / idle / elicitation） | `PermissionRequest` hook | surprise + curious |
 | 出错了 | `StopFailure` | （Codex 无专用失败事件） | surprise + annoyed |
+
+> Codex 的 `agent-turn-complete` 与 `Stop` 都是**回合边界**信号：Codex 停在一步、停下来问你问题、被打断、被限流时都会触发，并不代表任务成功完成。Codex 没有可靠的「任务完成」事件，因此桌宠把 Codex 的回合结束一律按「到一个回合了，去看看」处理（curious），不会误报「完成」。Claude 的 `Stop` 配合 `background_tasks` 才能区分真正的空闲与「还在后台跑」。
+>
+> Codex 接入**二选一**：`notify` 程序 或 `Stop` hook，不要同时配。两者在每个回合结束都会触发，同时配会在同一回合重复 POST（虽有冷却去重，仍属多余）。详见 `codex-hooks.md`。
