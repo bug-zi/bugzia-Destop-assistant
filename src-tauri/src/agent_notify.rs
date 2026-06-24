@@ -193,48 +193,20 @@ fn classify_codex(event: Option<&str>, body: &Value, cfg: &NotifyConfig) -> Opti
     // Codex `notify` program payload (argv JSON): type == agent-turn-complete.
     // Distinct from the hook payload (which carries hook_event_name on stdin).
     //
-    // NOTE: both `agent-turn-complete` and the `Stop` hook fire at every TURN
-    // BOUNDARY — including when Codex merely pauses to ask the user a question,
-    // stops between steps, gets interrupted, or rate-limits. They do NOT mean
-    // the task succeeded. Codex gives no reliable "task complete" signal, so we
-    // surface these as `paused` ("Codex stopped, go check") rather than a
-    // celebratory `done`, which would falsely claim the task finished. Mirrors
-    // the Claude-side `paused` handling for an ambiguous Stop.
+    // NOTE: both `agent-turn-complete` and the `Stop` hook fire at ambiguous turn
+    // boundaries. Codex may still auto-continue, think, or simply finish a small
+    // internal step. We emit a `done` candidate for the frontend to show only
+    // after a short quiet window, so the user still gets called back to Codex.
     let notify_done = body
         .get("type")
         .and_then(|v| v.as_str())
         .map(|t| t == "agent-turn-complete")
         .unwrap_or(false);
     if notify_done {
-        if !cfg.on_done {
-            return None;
-        }
-        return Some(build(
-            "codex",
-            "paused",
-            "Codex 停下来了，去看看",
-            // Codex notify uses a hyphenated key for the last message.
-            summary_if(body, "last-assistant-message", cfg.show_content),
-            None,
-            session,
-            cwd.clone(),
-        ));
+        return classify_codex_turn_boundary(body, cfg, session, cwd);
     }
     match event {
-        Some("Stop") => {
-            if !cfg.on_done {
-                return None;
-            }
-            Some(build(
-                "codex",
-                "paused",
-                "Codex 停下来了，去看看",
-                summary_if(body, "last_assistant_message", cfg.show_content),
-                None,
-                session,
-                cwd.clone(),
-            ))
-        }
+        Some("Stop") => classify_codex_turn_boundary(body, cfg, session, cwd),
         Some("PermissionRequest") => {
             if !cfg.on_needs {
                 return None;
@@ -259,6 +231,36 @@ fn classify_codex(event: Option<&str>, body: &Value, cfg: &NotifyConfig) -> Opti
         }
         _ => None,
     }
+}
+
+fn classify_codex_turn_boundary(
+    body: &Value,
+    cfg: &NotifyConfig,
+    session: Option<String>,
+    cwd: Option<String>,
+) -> Option<Value> {
+    if !cfg.on_done {
+        return None;
+    }
+    Some(build(
+        "codex",
+        "done",
+        "Codex 回合结束",
+        codex_turn_summary(body, cfg.show_content),
+        None,
+        session,
+        cwd,
+    ))
+}
+
+fn codex_turn_summary(body: &Value, show_content: bool) -> Option<String> {
+    if !show_content {
+        return None;
+    }
+    body.get("last-assistant-message")
+        .or_else(|| body.get("last_assistant_message"))
+        .and_then(|v| v.as_str())
+        .map(|s| truncate(s, 40))
 }
 
 /// Build the normalized payload object. `summary`/`tool`/`session` are only
@@ -417,31 +419,69 @@ mod tests {
     }
 
     #[test]
-    fn codex_notify_turn_complete_is_paused() {
-        // agent-turn-complete fires at every turn boundary (including when Codex
-        // pauses to ask a question), not on task success -> classified paused.
+    fn codex_notify_turn_complete_is_done_candidate() {
+        // agent-turn-complete is an ambiguous turn boundary. It is emitted as a
+        // done candidate; the frontend waits for a quiet window before showing.
         let body = serde_json::json!({
             "type": "agent-turn-complete",
             "thread-id": "t1",
             "last-assistant-message": "ok"
         });
-        let p = classify("codex", &body, &cfg(true)).expect("paused");
-        assert_eq!(p["kind"], "paused");
+        let p = classify("codex", &body, &cfg(true)).expect("done");
+        assert_eq!(p["kind"], "done");
+        assert_eq!(p["title"], "Codex 回合结束");
         assert_eq!(p["summary"], "ok");
-        assert_eq!(p["sessionId"], "t1"); // thread-id fallback
+        assert_eq!(p["sessionId"], "t1");
     }
 
     #[test]
-    fn codex_stop_is_paused() {
-        // Stop hook likewise fires at every turn boundary -> paused, never done.
+    fn codex_notify_turn_complete_with_completion_text_is_done() {
+        let body = serde_json::json!({
+            "type": "agent-turn-complete",
+            "thread-id": "t1",
+            "last-assistant-message": "已完成修复，pnpm build 验证通过。"
+        });
+        let p = classify("codex", &body, &cfg(true)).expect("done");
+        assert_eq!(p["kind"], "done");
+        assert_eq!(p["title"], "Codex 回合结束");
+        assert_eq!(p["summary"], "已完成修复，pnpm build 验证通过。");
+    }
+
+    #[test]
+    fn codex_stop_is_done_candidate() {
+        // Stop hook likewise fires at ambiguous turn boundaries, not only when
+        // Codex needs the user.
         let body = serde_json::json!({
             "hook_event_name": "Stop",
             "session_id": "c2",
             "last_assistant_message": "step done"
         });
-        let p = classify("codex", &body, &cfg(true)).expect("paused");
-        assert_eq!(p["kind"], "paused");
-        assert_eq!(p["sessionId"], "c2");
+        let p = classify("codex", &body, &cfg(true)).expect("done");
+        assert_eq!(p["kind"], "done");
+        assert_eq!(p["summary"], "step done");
+    }
+
+    #[test]
+    fn codex_stop_with_completion_text_is_done() {
+        let body = serde_json::json!({
+            "hook_event_name": "Stop",
+            "session_id": "c2",
+            "last_assistant_message": "修好了，测试通过。"
+        });
+        let p = classify("codex", &body, &cfg(true)).expect("done");
+        assert_eq!(p["kind"], "done");
+        assert_eq!(p["summary"], "修好了，测试通过。");
+    }
+
+    #[test]
+    fn codex_turn_complete_continuation_text_is_done_candidate() {
+        let body = serde_json::json!({
+            "type": "agent-turn-complete",
+            "last-assistant-message": "接下来我会继续检查。"
+        });
+        let p = classify("codex", &body, &cfg(true)).expect("done");
+        assert_eq!(p["kind"], "done");
+        assert_eq!(p["summary"], "接下来我会继续检查。");
     }
 
     #[test]

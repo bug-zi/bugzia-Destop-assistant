@@ -28,7 +28,7 @@ export interface CommandDef {
   mode: CommandMode;
   /** Leading trigger incl. the slash, e.g. "/weather". Omit on the AI default. */
   prefix?: string;
-  /** Extra triggers, e.g. "?" (web), "/天气" (weather). */
+  /** Extra triggers, e.g. "?" (web). */
   aliases?: string[];
   /** Shown by `/help`. */
   description: string;
@@ -44,10 +44,10 @@ export const COMMANDS: CommandDef[] = [
   { mode: "web", prefix: "/web", aliases: ["?"], description: "用默认浏览器搜索" },
   { mode: "file", prefix: "/file", description: "搜索本地文件" },
   { mode: "ai", prefix: "/ai", description: "强制 AI 对话" },
-  { mode: "weather", prefix: "/weather", aliases: ["/天气"], description: "查询城市天气" },
-  { mode: "trans", prefix: "/trans", aliases: ["/翻译"], description: "翻译文本（中英自动互译）" },
-  { mode: "note", prefix: "/note", aliases: ["/便签", "/便笺"], description: "在桌面生成一张便笺" },
-  { mode: "help", prefix: "/help", aliases: ["/?"], description: "查看所有命令", argless: true },
+  { mode: "weather", prefix: "/weather", description: "查询城市天气" },
+  { mode: "trans", prefix: "/trans", description: "翻译文本（中英自动互译）" },
+  { mode: "note", prefix: "/note", description: "在桌面生成一张便笺" },
+  { mode: "help", prefix: "/help", description: "查看所有命令", argless: true },
 ];
 
 /** Built-in engines per spec §3.2. Default engine is configurable later via Settings. */

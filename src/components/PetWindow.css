@@ -13,11 +13,16 @@
   background: transparent;
   cursor: grab;
   --bubble-h: 106px;
+  --chat-h: 38px;
   --bubble-bg: rgba(255, 255, 255, 0.94);
   --bubble-fg: #5a3b46;
   --bubble-border: rgba(90, 59, 70, 0.12);
   --bubble-shadow: 0 4px 10px rgba(0, 0, 0, 0.18);
   --sprite-shadow: drop-shadow(0 6px 6px rgba(0, 0, 0, 0.28));
+}
+
+.pet-root.pet-chat-open {
+  --bubble-h: 132px;
 }
 .pet-root:active {
   cursor: grabbing;
@@ -31,6 +36,7 @@
   display: flex;
   align-items: flex-end;
   justify-content: center;
+  gap: 6px;
   overflow: visible;
   pointer-events: none;
 }
@@ -43,6 +49,28 @@
   bottom: 4px;
   pointer-events: auto;
   animation: pet-pop 0.18s ease-out;
+}
+
+.pet-chat-open .pet-bubble-layer {
+  align-items: center;
+  flex-direction: column;
+  justify-content: flex-end;
+  padding: 0 6px 4px;
+  box-sizing: border-box;
+}
+
+.pet-chat-open .pet-bubble {
+  max-height: calc(var(--bubble-h) - var(--chat-h) - 14px);
+  flex: 0 1 auto;
+}
+
+.pet-chat-open .pet-chat {
+  position: relative;
+  left: auto;
+  right: auto;
+  bottom: auto;
+  width: 100%;
+  flex: 0 0 var(--chat-h);
 }
 
 .pet-chat-cancel {

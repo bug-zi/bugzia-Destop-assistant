@@ -114,6 +114,7 @@ const LEGACY_AI_IDLE_INTERVAL_MS = 90_000;
 const ACTIVE_AI_IDLE_INTERVAL_MS = 60_000;
 const INPUT_REACTION_MIN_INTERVAL_MS = 3_000;
 const BUBBLE_TTL_MS = 2_500;
+const CODEX_DONE_CONFIRM_MS = 15_000;
 const AI_FAILURE_NOTICE_MIN_INTERVAL_MS = 30_000;
 const AI_FAILURE_INTERACTION_NOTICE_MIN_INTERVAL_MS = 8_000;
 const AI_UNAVAILABLE_LINE = "本女王暂时懒得回应。";
@@ -250,6 +251,9 @@ export default function PetWindow() {
   // on_* flags + show_content are enforced Rust-side before the event fires).
   const agentNotifyRef = useRef<AgentNotifySettings>(DEFAULT_AGENT_NOTIFY);
   const lastAgentNotifyAtRef = useRef<Record<string, number>>({});
+  const pendingCodexDoneTimerRef = useRef<number | null>(null);
+  const pendingCodexDoneKeyRef = useRef("");
+  const pendingCodexDoneScopeRef = useRef<{ sessionId?: string; cwd?: string } | null>(null);
   const agentNotifyTopTimerRef = useRef<number | null>(null);
   const [bubble, setBubble] = useState<string | null>(null);
   const [agentAction, setAgentAction] = useState<PetAgentNotify | null>(null);
@@ -357,6 +361,7 @@ export default function PetWindow() {
     return () => {
       alive = false;
       un?.();
+      clearPendingCodexDone();
     };
   }, []);
 
@@ -729,12 +734,53 @@ export default function PetWindow() {
     }
   }
 
-  /** React to a Claude Code / Codex lifecycle event relayed by the Rust
-   *  receiver. Agent notifications are independent from regular speech bubbles;
-   *  a per-kind cooldown stops back-to-back turns from spamming bubbles;
-   *  only_unfocused suppresses the bubble while a Bugzia window is focused. */
-  function reactToAgentNotify(payload: PetAgentNotify) {
+  function clearPendingCodexDone() {
+    if (pendingCodexDoneTimerRef.current != null) {
+      window.clearTimeout(pendingCodexDoneTimerRef.current);
+      pendingCodexDoneTimerRef.current = null;
+    }
+    pendingCodexDoneKeyRef.current = "";
+    pendingCodexDoneScopeRef.current = null;
+  }
+
+  function isSamePendingCodexScope(payload: PetAgentNotify): boolean {
+    const pending = pendingCodexDoneScopeRef.current;
+    if (!pending) return false;
+    if (pending.sessionId && payload.sessionId) return pending.sessionId === payload.sessionId;
+    if (pending.cwd && payload.cwd) return pending.cwd === payload.cwd;
+    return true;
+  }
+
+  function codexDoneKey(payload: PetAgentNotify): string {
+    return [
+      payload.sessionId ?? "",
+      payload.cwd ?? "",
+      payload.summary ?? "",
+      String(payload.receivedAt),
+    ].join("|");
+  }
+
+  function scheduleCodexDoneNotify(payload: PetAgentNotify) {
+    const cfg = agentNotifyRef.current;
+    if (!cfg.enabled || !cfg.on_done) return;
+
+    clearPendingCodexDone();
+    const key = codexDoneKey(payload);
+    pendingCodexDoneKeyRef.current = key;
+    pendingCodexDoneScopeRef.current = {
+      sessionId: payload.sessionId,
+      cwd: payload.cwd,
+    };
+    pendingCodexDoneTimerRef.current = window.setTimeout(() => {
+      if (pendingCodexDoneKeyRef.current !== key) return;
+      clearPendingCodexDone();
+      showAgentNotify(payload);
+    }, CODEX_DONE_CONFIRM_MS);
+  }
+
+  function showAgentNotify(payload: PetAgentNotify) {
     if (actionRef.current === "drag") return;
+    if (payload.source === "codex" && payload.kind === "paused") return;
 
     const cfg = agentNotifyRef.current;
     if (!cfg.enabled) return;
@@ -778,6 +824,25 @@ export default function PetWindow() {
     } else {
       fire();
     }
+  }
+
+  /** React to a Claude Code / Codex lifecycle event relayed by the Rust
+   *  receiver. Agent notifications are independent from regular speech bubbles;
+   *  a per-kind cooldown stops back-to-back turns from spamming bubbles;
+   *  only_unfocused suppresses the bubble while a Bugzia window is focused. */
+  function reactToAgentNotify(payload: PetAgentNotify) {
+    if (payload.source === "codex") {
+      if (payload.kind === "paused") return;
+      if (payload.kind === "needs" && isSamePendingCodexScope(payload)) {
+        clearPendingCodexDone();
+      }
+      if (payload.kind === "done") {
+        scheduleCodexDoneNotify(payload);
+        return;
+      }
+    }
+
+    showAgentNotify(payload);
   }
 
   function reactToSocialNotify(payload: PetSocialNotify) {
@@ -1099,11 +1164,12 @@ export default function PetWindow() {
   } as CSSProperties;
   const expression = MOOD_EXPRESSION[mood];
   const hasNoticeAction = agentAction != null || socialAction != null;
+  const showBubble = bubble != null;
 
   return (
     <div
       ref={rootRef}
-      className={`pet-root pet-action-${action} pet-mood-${mood}${dragOver ? " pet-dragover" : ""}`}
+      className={`pet-root pet-action-${action} pet-mood-${mood}${dragOver ? " pet-dragover" : ""}${chatOpen ? " pet-chat-open" : ""}`}
       style={style}
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
@@ -1111,7 +1177,7 @@ export default function PetWindow() {
       onPointerCancel={onPointerCancel}
     >
       <div className="pet-bubble-layer">
-        {bubble != null && (
+        {showBubble && (
           <div className={"pet-bubble" + (hasNoticeAction ? " pet-bubble-actionable" : "")}>
             <div className="pet-bubble-text">{bubble}</div>
             {agentAction && (
@@ -1170,7 +1236,7 @@ export default function PetWindow() {
             </button>
           </div>
         )}
-        {action === "sleep" && bubble == null && <div className="pet-snooze">Zzz</div>}
+        {action === "sleep" && !showBubble && <div className="pet-snooze">Zzz</div>}
       </div>
       <div className="pet-body-layer">
         <div className="pet-look">

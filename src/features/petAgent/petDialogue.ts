@@ -31,7 +31,9 @@ function pickLine(lines: string[]): string {
 }
 
 export function getPetLine(scene: PetSpeechScene, extraLines: string[] = []): string {
-  const lines = scene === "idle" && extraLines.length > 0 ? extraLines : PET_CORPUS[scene];
+  const lines = scene === "idle" && extraLines.length > 0
+    ? [...extraLines, ...PET_CORPUS.idle]
+    : PET_CORPUS[scene];
   return pickLine(lines);
 }
 
@@ -39,9 +41,9 @@ function cleanPetLine(text: string): string {
   return text
     .trim()
     .replace(/^["“”'「『]+|["“”'」』]+$/g, "")
-    .split(/\r?\n/)[0]
+    .replace(/\s*\r?\n\s*/g, " ")
     .trim()
-    .slice(0, 48);
+    .slice(0, 96);
 }
 
 function isPetAiAction(value: unknown): value is PetAiAction {
