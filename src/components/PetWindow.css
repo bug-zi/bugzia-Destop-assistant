@@ -28,6 +28,26 @@
   cursor: grabbing;
 }
 
+.pet-debug-panel {
+  position: absolute;
+  z-index: 20;
+  left: 6px;
+  top: 6px;
+  max-width: calc(100vw - 12px);
+  padding: 6px 8px;
+  border: 1px solid rgba(255, 180, 205, 0.3);
+  border-radius: 8px;
+  color: #fff7fb;
+  background: rgba(48, 18, 31, 0.78);
+  box-shadow: 0 6px 14px rgba(0, 0, 0, 0.22);
+  font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+  font-size: 10px;
+  line-height: 1.35;
+  text-align: left;
+  pointer-events: auto;
+  user-select: text;
+}
+
 .pet-bubble-layer {
   position: relative;
   width: 100%;

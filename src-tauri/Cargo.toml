@@ -45,11 +45,12 @@ trash = "5"
 # user. tiny_http is synchronous + thread-per-connection, so it runs in a
 # dedicated std::thread without pulling an async runtime into the app.
 tiny_http = "0.12"
+# Social-app new-message detection (WeChat preview window). We find the WeChat
+# process via a toolhelp snapshot and enumerate its top-level windows — pure
+# Win32, no package identity needed (unlike the old WinRT notification listener,
+# which a plain Tauri exe can't access).
 windows = { version = "0.56", features = [
-  "ApplicationModel",
-  "Foundation",
-  "Foundation_Collections",
-  "UI_Notifications",
-  "UI_Notifications_Management",
-  "Win32_System_WinRT",
+  "Win32_Foundation",
+  "Win32_System_Diagnostics_ToolHelp",
+  "Win32_UI_WindowsAndMessaging",
 ] }

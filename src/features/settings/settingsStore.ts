@@ -18,6 +18,7 @@ export async function loadSettings(): Promise<AppSettings> {
       note: { ...DEFAULT_SETTINGS.note, ...s.note },
       agent_notify: { ...DEFAULT_SETTINGS.agent_notify, ...s.agent_notify },
       social_notify: { ...DEFAULT_SETTINGS.social_notify, ...s.social_notify },
+      hotkey: { ...DEFAULT_SETTINGS.hotkey, ...s.hotkey },
     };
   } catch (e) {
     console.error("[bugzia] load_settings failed", e);

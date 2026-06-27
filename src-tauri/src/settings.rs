@@ -346,6 +346,33 @@ impl Default for SystemSettings {
     }
 }
 
+/// Global hotkey settings for the input bar. `summon` shows + focuses the bar
+/// and hides it again when already visible (toggle, the standard launcher-bar
+/// UX) — one key both summons and dismisses the bar. A Tauri accelerator string
+/// such as "alt+space". The whole section is `#[serde(default)]` on
+/// `AppSettings`, so a legacy settings.json (which predates this feature) loads
+/// the default below instead of wiping. Manual `Default` keeps a fresh install
+/// at the working default rather than collapsing to an empty string (which
+/// would leave the bar with no way to be summoned).
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct HotkeySettings {
+    /// Accelerator to summon the input bar; toggles (hides) when already visible.
+    #[serde(default = "default_hotkey_summon")]
+    pub summon: String,
+}
+
+fn default_hotkey_summon() -> String {
+    "alt+space".to_string()
+}
+
+impl Default for HotkeySettings {
+    fn default() -> Self {
+        Self {
+            summon: default_hotkey_summon(),
+        }
+    }
+}
+
 /// Desktop pet companion settings. A self-contained floating overlay that
 /// idles (blink), looks toward the cursor, reacts to a click (petted + speech
 /// bubble), and can be dragged. Decoupled from Bugzia's other features — no
@@ -382,6 +409,9 @@ pub struct PetSettings {
     /// Whether double-click opens the pet chat input.
     #[serde(default = "default_true")]
     pub chat_enabled: bool,
+    /// Show developer-only runtime state overlay on the pet window.
+    #[serde(default)]
+    pub debug_panel: bool,
     /// Speech-bubble lines (one chosen at random). User-editable in Settings.
     #[serde(default = "default_pet_speech_lines")]
     pub speech_lines: Vec<String>,
@@ -470,6 +500,7 @@ impl Default for PetSettings {
             ai_idle_interval_ms: default_pet_ai_idle_interval_ms(),
             ai_interaction_interval_ms: default_pet_ai_interaction_interval_ms(),
             chat_enabled: true,
+            debug_panel: false,
             speech_lines: default_pet_speech_lines(),
             x: -1,
             y: -1,
@@ -644,6 +675,8 @@ pub struct AppSettings {
     pub agent_notify: AgentNotifySettings,
     #[serde(default)]
     pub social_notify: SocialNotifySettings,
+    #[serde(default)]
+    pub hotkey: HotkeySettings,
 }
 
 // ---------------------------------------------------------------------------
@@ -868,5 +901,20 @@ mod tests {
         assert!((r.unlocked_a - 0.12).abs() < 1e-6);
         // other fields preserved:
         assert_eq!(r.scrollbar_w, 8.0);
+    }
+
+    /// Regression guard for the global hotkey settings: a legacy settings.json
+    /// that predates the `hotkey` section must still deserialize — with summon
+    /// defaulting to the working accelerator (alt+space), not failing and wiping
+    /// the rest. The section-level `#[serde(default)]` is what makes this work;
+    /// remove it and this test fails, saving the user's other tuning.
+    #[test]
+    fn legacy_settings_without_hotkey_section_loads_default() {
+        let legacy = serde_json::json!({
+            "system": { "autostart": true }
+        });
+        let parsed: AppSettings = serde_json::from_value(legacy).unwrap();
+        assert!(parsed.system.autostart); // preserved
+        assert_eq!(parsed.hotkey.summon, "alt+space"); // defaulted, not wiped
     }
 }

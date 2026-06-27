@@ -111,6 +111,18 @@ export interface SystemSettings {
 }
 
 /**
+ * Global hotkey settings for the input bar. `summon` shows + focuses the bar and
+ * hides it again when already visible (toggle) — one key both summons and
+ * dismisses it. A Tauri accelerator string such as "alt+space". Frontend mirror
+ * of Rust `HotkeySettings` (src-tauri/src/settings.rs); field names MUST match
+ * the serde JSON keys exactly.
+ */
+export interface HotkeySettings {
+  /** Accelerator to summon the input bar; toggles (hides) when already visible. */
+  summon: string;
+}
+
+/**
  * Desktop waveform visualizer settings. The overlay floats on the desktop and
  * dances to whatever the system is playing (captured via WASAPI loopback on the
  * Rust side). Frontend mirror of the Rust `WaveformSettings` (settings.rs);
@@ -172,6 +184,7 @@ export interface PetSettings {
   ai_idle_interval_ms: number;
   ai_interaction_interval_ms: number;
   chat_enabled: boolean;
+  debug_panel: boolean;
   speech_lines: string[];
   /** -1 sentinel = never placed by the user. */
   x: number;
@@ -263,6 +276,7 @@ export interface AppSettings {
   note: NoteSettings;
   agent_notify: AgentNotifySettings;
   social_notify: SocialNotifySettings;
+  hotkey: HotkeySettings;
 }
 
 export const DEFAULT_APPEARANCE: AppearanceSettings = {
@@ -365,6 +379,7 @@ export const DEFAULT_PET: PetSettings = {
   ai_idle_interval_ms: 60000,
   ai_interaction_interval_ms: 12000,
   chat_enabled: true,
+  debug_panel: false,
   speech_lines: ["哼，终于想起我了？", "今天也要优雅一点。", "别乱点，我在看着你。", "做得不错。", "再陪我一会儿。"],
   x: -1,
   y: -1,
@@ -408,6 +423,10 @@ export const DEFAULT_SOCIAL_NOTIFY: SocialNotifySettings = {
   show_content: false,
 };
 
+export const DEFAULT_HOTKEY: HotkeySettings = {
+  summon: "alt+space", // 召唤键；已显示时再按一次即隐藏（切换）
+};
+
 export const DEFAULT_SETTINGS: AppSettings = {
   appearance: DEFAULT_APPEARANCE,
   result: DEFAULT_RESULT,
@@ -420,6 +439,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   note: DEFAULT_NOTE,
   agent_notify: DEFAULT_AGENT_NOTIFY,
   social_notify: DEFAULT_SOCIAL_NOTIFY,
+  hotkey: DEFAULT_HOTKEY,
 };
 
 /**
@@ -439,4 +459,5 @@ export interface SettingsPatch {
   note: NoteSettings;
   agent_notify: AgentNotifySettings;
   social_notify: SocialNotifySettings;
+  hotkey: HotkeySettings;
 }

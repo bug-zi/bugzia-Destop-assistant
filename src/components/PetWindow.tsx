@@ -43,66 +43,22 @@ import {
   summarizePetPreferences,
   type PetPreferences,
 } from "../features/petAgent/petPreferences";
+import {
+  ACTIONS,
+  actionForAiAction,
+  type PetAction,
+} from "../features/petAgent/petActions";
+import {
+  INITIAL_PET_RUNTIME,
+  canShowRuntimeNotice,
+  eventForAiAction,
+  presentationForRuntime,
+  transitionPetRuntime,
+  type PetNoticePriority,
+  type PetRuntimeEvent,
+  type PetRuntimeSnapshot,
+} from "../features/petAgent/petStateMachine";
 import "./PetWindow.css";
-import annoyedSheetSrc from "../../assets/pet/vampire-sprite-v1/runtime/annoyed.png";
-import blinkSheetSrc from "../../assets/pet/vampire-sprite-v1/runtime/blink.png";
-import curiousSheetSrc from "../../assets/pet/vampire-sprite-v1/runtime/curious.png";
-import doubleSurpriseSheetSrc from "../../assets/pet/vampire-sprite-v1/runtime/double_surprise.png";
-import dragSheetSrc from "../../assets/pet/vampire-sprite-v1/runtime/drag.png";
-import dropSheetSrc from "../../assets/pet/vampire-sprite-v1/runtime/drop.png";
-import happySheetSrc from "../../assets/pet/vampire-sprite-v1/runtime/happy.png";
-import idleSheetSrc from "../../assets/pet/vampire-sprite-v1/runtime/idle.png";
-import mockingSheetSrc from "../../assets/pet/vampire-sprite-v1/runtime/mocking.png";
-import protectiveSheetSrc from "../../assets/pet/vampire-sprite-v1/runtime/protective.png";
-import sleepStartSheetSrc from "../../assets/pet/vampire-sprite-v1/runtime/sleep_start.png";
-import sleepSheetSrc from "../../assets/pet/vampire-sprite-v1/runtime/sleep.png";
-import surpriseSheetSrc from "../../assets/pet/vampire-sprite-v1/runtime/surprise.png";
-import tapHappySheetSrc from "../../assets/pet/vampire-sprite-v1/runtime/tap_happy.png";
-import wakeSheetSrc from "../../assets/pet/vampire-sprite-v1/runtime/wake.png";
-import waveSheetSrc from "../../assets/pet/vampire-sprite-v1/runtime/wave.png";
-
-type PetAction =
-  | "idle"
-  | "blink"
-  | "happy"
-  | "tap_happy"
-  | "drag"
-  | "drop"
-  | "surprise"
-  | "double_surprise"
-  | "annoyed"
-  | "curious"
-  | "protective"
-  | "mocking"
-  | "sleep_start"
-  | "sleep"
-  | "wake"
-  | "wave";
-interface ActionSpec {
-  src: string;
-  frames: number;
-  fps: number;
-  loop: boolean;
-  next?: PetAction;
-}
-const ACTIONS: Record<PetAction, ActionSpec> = {
-  idle: { src: idleSheetSrc, frames: 6, fps: 8, loop: true },
-  blink: { src: blinkSheetSrc, frames: 4, fps: 12, loop: false, next: "idle" },
-  happy: { src: happySheetSrc, frames: 6, fps: 12, loop: false, next: "idle" },
-  tap_happy: { src: tapHappySheetSrc, frames: 6, fps: 12, loop: false, next: "idle" },
-  drag: { src: dragSheetSrc, frames: 4, fps: 10, loop: true },
-  drop: { src: dropSheetSrc, frames: 5, fps: 12, loop: false, next: "idle" },
-  surprise: { src: surpriseSheetSrc, frames: 6, fps: 14, loop: false, next: "idle" },
-  double_surprise: { src: doubleSurpriseSheetSrc, frames: 6, fps: 14, loop: false, next: "idle" },
-  annoyed: { src: annoyedSheetSrc, frames: 6, fps: 14, loop: false, next: "idle" },
-  curious: { src: curiousSheetSrc, frames: 6, fps: 10, loop: false, next: "idle" },
-  protective: { src: protectiveSheetSrc, frames: 6, fps: 12, loop: false, next: "idle" },
-  mocking: { src: mockingSheetSrc, frames: 6, fps: 12, loop: false, next: "idle" },
-  sleep_start: { src: sleepStartSheetSrc, frames: 5, fps: 8, loop: false, next: "sleep" },
-  sleep: { src: sleepSheetSrc, frames: 4, fps: 6, loop: true },
-  wake: { src: wakeSheetSrc, frames: 5, fps: 12, loop: false, next: "idle" },
-  wave: { src: waveSheetSrc, frames: 5, fps: 12, loop: false, next: "idle" },
-};
 const DOUBLE_CLICK_MS = 320;
 const AUTO_SLEEP_MS = 6 * 60_000;
 const SLEEP_CHECK_MS = 5_000;
@@ -122,8 +78,6 @@ const CHAT_AI_TIMEOUT_MS = 20_000;
 const CHAT_THINKING_LINE = "稍等，本女王正在想。";
 const PET_SOCIAL_NOTIFY = "pet:social-notify";
 
-type PetNoticePriority = "ambient" | "input" | "system" | "interaction" | "social" | "agent";
-
 const NOTICE_PRIORITY: Record<PetNoticePriority, number> = {
   ambient: 0,
   input: 1,
@@ -132,6 +86,24 @@ const NOTICE_PRIORITY: Record<PetNoticePriority, number> = {
   social: 3,
   agent: 4,
 };
+
+function eventForNoticePriority(priority: PetNoticePriority): PetRuntimeEvent {
+  switch (priority) {
+    case "input":
+      return "search_input";
+    case "system":
+      return "wake";
+    case "interaction":
+      return "pet_click";
+    case "social":
+      return "social_notify";
+    case "agent":
+      return "agent_working";
+    case "ambient":
+    default:
+      return "idle";
+  }
+}
 
 const MOOD_EXPRESSION: Partial<Record<PetMood, string>> = {
   pleased: "♪",
@@ -155,6 +127,7 @@ type PetEvent =
   | { type: "sleep" }
   | { type: "wake" }
   | { type: "wave" }
+  | { type: "set-action"; action: PetAction }
   | { type: "complete"; action: PetAction };
 
 function petReducer(state: PetAction, event: PetEvent): PetAction {
@@ -186,6 +159,8 @@ function petReducer(state: PetAction, event: PetEvent): PetAction {
       return ACTIONS[state].next ?? "idle";
     case "wave":
       return state === "idle" ? "wave" : state;
+    case "set-action":
+      return event.action;
     default:
       return state;
   }
@@ -247,6 +222,7 @@ export default function PetWindow() {
   const activeNoticeRef = useRef<ActivePetNotice | null>(null);
   const memoryRef = useRef<PetMemory>(createPetMemory());
   const preferencesRef = useRef<PetPreferences>(loadPetPreferences());
+  const runtimeRef = useRef<PetRuntimeSnapshot>(INITIAL_PET_RUNTIME);
   // agent_notify cfg (cooldown_ms + only_unfocused are read here; the per-kind
   // on_* flags + show_content are enforced Rust-side before the event fires).
   const agentNotifyRef = useRef<AgentNotifySettings>(DEFAULT_AGENT_NOTIFY);
@@ -387,6 +363,7 @@ export default function PetWindow() {
     let alive = true;
     (async () => {
       un = await listen<PetSocialNotify>(PET_SOCIAL_NOTIFY, (ev) => {
+        void invoke<boolean>("social_notify_ack").catch(() => {});
         reactToSocialNotify(ev.payload);
       });
       if (!alive && un) un();
@@ -493,6 +470,7 @@ export default function PetWindow() {
         now - lastWakeAtRef.current > SLEEP_GRACE_AFTER_WAKE_MS &&
         now - lastPetSpeechAtRef.current > RECENT_SPEECH_SLEEP_BLOCK_MS;
       if (canSleep) {
+        applyRuntimeEvent("sleep_start");
         dispatch({ type: "sleep" });
         speak("sleepStart");
       }
@@ -572,14 +550,33 @@ export default function PetWindow() {
     }
   }
 
+  function applyRuntimeEvent(event: PetRuntimeEvent, aiAction?: PetAiAction): boolean {
+    const now = Date.now();
+    const next = transitionPetRuntime(runtimeRef.current, event, now);
+    if (next === runtimeRef.current) return false;
+
+    runtimeRef.current = next;
+    const presentation = presentationForRuntime(next.state);
+    if (aiAction) {
+      playAiAction(aiAction);
+    } else if (presentation.action) {
+      dispatch({ type: "set-action", action: presentation.action });
+    }
+    setMood(presentation.mood);
+    return true;
+  }
+
   function showPetNotice(
     line: string,
     moodValue: PetMood,
     priority: PetNoticePriority,
     aiAction?: PetAiAction,
     ttlMs: number | null = BUBBLE_TTL_MS,
+    runtimeEvent: PetRuntimeEvent = eventForNoticePriority(priority),
   ): number | null {
     const now = Date.now();
+    if (!canShowRuntimeNotice(runtimeRef.current, runtimeEvent, now)) return null;
+
     const current = activeNoticeRef.current;
     if (
       current &&
@@ -588,6 +585,7 @@ export default function PetWindow() {
     ) {
       return null;
     }
+    applyRuntimeEvent(runtimeEvent, aiAction);
 
     const id = ++noticeIdRef.current;
     activeNoticeRef.current = {
@@ -595,7 +593,6 @@ export default function PetWindow() {
       priority,
       expiresAt: ttlMs == null ? Number.POSITIVE_INFINITY : now + ttlMs,
     };
-    if (aiAction) applyAiAction(aiAction);
     lastPetSpeechAtRef.current = now;
     setMood(moodValue);
     setBubble(line);
@@ -668,7 +665,7 @@ export default function PetWindow() {
         : AI_FAILURE_NOTICE_MIN_INTERVAL_MS;
     if (now - lastAiFailureNoticeAtRef.current < minInterval) return;
     lastAiFailureNoticeAtRef.current = now;
-    showPetNotice(AI_UNAVAILABLE_LINE, "mocking", priority);
+    showPetNotice(AI_UNAVAILABLE_LINE, "mocking", priority, undefined, BUBBLE_TTL_MS, "chat_error");
   }
 
   async function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
@@ -712,7 +709,7 @@ export default function PetWindow() {
               : reaction.kind === "mocking"
                 ? "mocking"
                 : undefined;
-    if (aiAction) applyAiAction(aiAction);
+    applyRuntimeEvent("search_input", aiAction);
   }
 
   /** Best-effort "is any Bugzia window focused right now?" Backs the
@@ -764,6 +761,7 @@ export default function PetWindow() {
     const cfg = agentNotifyRef.current;
     if (!cfg.enabled || !cfg.on_done) return;
 
+    applyRuntimeEvent("agent_thinking");
     clearPendingCodexDone();
     const key = codexDoneKey(payload);
     pendingCodexDoneKeyRef.current = key;
@@ -807,8 +805,9 @@ export default function PetWindow() {
         parts.join(" "),
         reaction.mood,
         "agent",
-        reaction.action,
+        undefined,
         null,
+        runtimeEventForAgentNotify(payload),
       );
       if (noticeId != null) {
         setAgentAction(payload);
@@ -836,6 +835,9 @@ export default function PetWindow() {
       if (payload.kind === "needs" && isSamePendingCodexScope(payload)) {
         clearPendingCodexDone();
       }
+      if (payload.kind === "needs") {
+        applyRuntimeEvent("agent_waiting");
+      }
       if (payload.kind === "done") {
         scheduleCodexDoneNotify(payload);
         return;
@@ -843,6 +845,21 @@ export default function PetWindow() {
     }
 
     showAgentNotify(payload);
+  }
+
+  function runtimeEventForAgentNotify(payload: PetAgentNotify): PetRuntimeEvent {
+    switch (payload.kind) {
+      case "done":
+        return "agent_done";
+      case "needs":
+        return "agent_waiting";
+      case "error":
+        return "agent_error";
+      case "paused":
+        return payload.source === "codex" ? "agent_thinking" : "agent_working";
+      default:
+        return "agent_working";
+    }
   }
 
   function reactToSocialNotify(payload: PetSocialNotify) {
@@ -861,7 +878,7 @@ export default function PetWindow() {
     if (summary) parts.push(summary);
 
     noteInteraction();
-    const noticeId = showPetNotice(parts.join(" "), "curious", "social", "curious", null);
+    const noticeId = showPetNotice(parts.join(" "), "curious", "social", "curious", null, "social_notify");
     if (noticeId != null) {
       setAgentAction(null);
       setSocialAction(payload);
@@ -869,14 +886,9 @@ export default function PetWindow() {
     }
   }
 
-  function applyAiAction(aiAction: PetAiAction) {
-    if (aiAction === "happy") dispatch({ type: "pet" });
-    if (aiAction === "surprise") dispatch({ type: "surprise" });
-    if (aiAction === "wake") dispatch({ type: "wake" });
-    if (aiAction === "annoyed") dispatch({ type: "annoyed" });
-    if (aiAction === "curious") dispatch({ type: "curious" });
-    if (aiAction === "protective") dispatch({ type: "protective" });
-    if (aiAction === "mocking") dispatch({ type: "mocking" });
+  function playAiAction(aiAction: PetAiAction) {
+    const nextAction = actionForAiAction(aiAction);
+    if (nextAction) dispatch({ type: "set-action", action: nextAction });
   }
 
   function moodForScene(scene: PetSpeechScene): PetMood {
@@ -927,6 +939,34 @@ export default function PetWindow() {
     }
   }
 
+  function runtimeEventForScene(scene: PetSpeechScene): PetRuntimeEvent {
+    switch (scene) {
+      case "inputPreview":
+      case "feedingHover":
+        return "search_input";
+      case "doubleClick":
+        return "pet_double_click";
+      case "chat":
+        return "chat_open";
+      case "drag":
+        return "drag_start";
+      case "drop":
+        return "drag_end";
+      case "sleepStart":
+        return "sleep_start";
+      case "wake":
+        return "wake";
+      case "fed":
+      case "fedFail":
+      case "click":
+      case "startup":
+        return "pet_click";
+      case "idle":
+      default:
+        return "idle";
+    }
+  }
+
   /** "Eat" dropped files: send them to the OS recycle bin and react happily.
    *  Uses local lines via speak() so the feeding is remembered in memory, with no
    *  AI latency. */
@@ -962,7 +1002,14 @@ export default function PetWindow() {
     const localLine = getPetLine(scene, options.extraLines);
     memoryRef.current = rememberPetEvent(memoryRef.current, scene, localLine);
     const localAction = localActionForScene(scene, localLine);
-    const noticeId = showPetNotice(localLine, moodForScene(scene), priorityForScene(scene), localAction);
+    const noticeId = showPetNotice(
+      localLine,
+      moodForScene(scene),
+      priorityForScene(scene),
+      localAction,
+      BUBBLE_TTL_MS,
+      runtimeEventForScene(scene),
+    );
     if (noticeId == null) return;
 
     if (!options.improvise || !settingsRef.current.ai_speech_enabled) return;
@@ -985,7 +1032,14 @@ export default function PetWindow() {
         if (!settingsRef.current.speech_enabled) return;
         if (actionRef.current === "sleep" || actionRef.current === "drag") return;
         memoryRef.current = rememberPetEvent(memoryRef.current, scene, reply.line);
-        showPetNotice(reply.line, reply.mood, priorityForScene(scene), reply.action);
+        showPetNotice(
+          reply.line,
+          reply.mood,
+          priorityForScene(scene),
+          reply.action,
+          BUBBLE_TTL_MS,
+          eventForAiAction(reply.action),
+        );
       })
       .catch(() => {
         if (!canResolveNotice(noticeId)) return;
@@ -1015,12 +1069,11 @@ export default function PetWindow() {
     }
 
     noteInteraction();
-    dispatch({ type: "pet" });
     const learning = learnPetPreferences(text, preferencesRef.current);
     preferencesRef.current = learning.preferences;
     if (learning.learnedLine) {
       memoryRef.current = rememberPetEvent(memoryRef.current, "chat", learning.learnedLine);
-      showPetNotice(learning.learnedLine, "pleased", "interaction");
+      showPetNotice(learning.learnedLine, "pleased", "interaction", "happy", BUBBLE_TTL_MS, "chat_reply");
       return;
     }
 
@@ -1028,11 +1081,11 @@ export default function PetWindow() {
 
     const localLine = getPetLine("chat");
     memoryRef.current = rememberPetEvent(memoryRef.current, "chat", localLine);
-    const noticeId = showPetNotice(CHAT_THINKING_LINE, "curious", "interaction");
+    const noticeId = showPetNotice(CHAT_THINKING_LINE, "curious", "interaction", undefined, BUBBLE_TTL_MS, "chat_submit");
     if (noticeId == null) return;
 
     if (!settingsRef.current.ai_speech_enabled) {
-      showPetNotice(localLine, moodForScene("chat"), "interaction");
+      showPetNotice(localLine, moodForScene("chat"), "interaction", undefined, BUBBLE_TTL_MS, "chat_reply");
       return;
     }
 
@@ -1051,7 +1104,7 @@ export default function PetWindow() {
         if (!settingsRef.current.speech_enabled) return;
         if (actionRef.current === "sleep" || actionRef.current === "drag") return;
         memoryRef.current = rememberPetEvent(memoryRef.current, "chat", reply.line);
-        showPetNotice(reply.line, reply.mood, "interaction", reply.action);
+        showPetNotice(reply.line, reply.mood, "interaction", reply.action, BUBBLE_TTL_MS, "chat_reply");
       })
       .catch(() => {
         if (chatRequestRef.current !== requestId) return;
@@ -1165,6 +1218,8 @@ export default function PetWindow() {
   const expression = MOOD_EXPRESSION[mood];
   const hasNoticeAction = agentAction != null || socialAction != null;
   const showBubble = bubble != null;
+  const runtimeDebug = runtimeRef.current;
+  const runtimeHoldMs = Math.max(0, runtimeDebug.holdUntil - Date.now());
 
   return (
     <div
@@ -1238,6 +1293,18 @@ export default function PetWindow() {
         )}
         {action === "sleep" && !showBubble && <div className="pet-snooze">Zzz</div>}
       </div>
+      {settings.debug_panel && (
+        <div className="pet-debug-panel" onPointerDown={(e) => e.stopPropagation()}>
+          <div>state: {runtimeDebug.state}</div>
+          <div>action: {action}</div>
+          <div>mood: {mood}</div>
+          <div>priority: {runtimeDebug.priority}</div>
+          <div>hold: {runtimeHoldMs}ms</div>
+          <div>bubble: {showBubble ? "on" : "off"}</div>
+          <div>chat: {chatOpen ? "open" : chatPending ? "pending" : "idle"}</div>
+          <div>agent: {agentAction ? `${agentAction.source}/${agentAction.kind}` : "none"}</div>
+        </div>
+      )}
       <div className="pet-body-layer">
         <div className="pet-look">
           {expression && <div className="pet-expression" aria-hidden="true">{expression}</div>}

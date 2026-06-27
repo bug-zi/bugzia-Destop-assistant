@@ -60,6 +60,7 @@ use tauri::menu::{CheckMenuItem, IsMenuItem, Menu, MenuItem};
 use tauri::tray::TrayIconBuilder;
 use tauri::{AppHandle, Emitter, Manager, Wry};
 use tauri_plugin_autostart::{AutoLaunchManager, MacosLauncher};
+use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 
 /// Show + focus the main bar. Used by the global shortcut and the tray menu.
 fn focus_main(app: &AppHandle) {
@@ -67,6 +68,54 @@ fn focus_main(app: &AppHandle) {
         let _ = win.show();
         let _ = win.set_focus();
     }
+}
+
+/// Toggle the main bar: hide it if currently visible, otherwise show + focus.
+/// The summon shortcut uses this so the same key both summons and dismisses the
+/// bar (the standard launcher-bar UX, e.g. Spotlight / PowerToys Run).
+fn toggle_main(app: &AppHandle) {
+    if let Some(win) = app.get_webview_window("main") {
+        match win.is_visible() {
+            Ok(true) => {
+                let _ = win.hide();
+            }
+            _ => {
+                let _ = win.show();
+                let _ = win.set_focus();
+            }
+        }
+    }
+}
+
+/// (Re)register the input-bar global hotkey. Clears any previously registered
+/// shortcuts first so a settings change fully replaces the binding. The `summon`
+/// accelerator is registered via `on_shortcut` (independent of any global
+/// handler) and toggles the bar — one key both summons and dismisses it. An
+/// empty accelerator is skipped (leaving the bar summonable only via the tray);
+/// an unparseable one returns an error naming the offending combo so the UI can
+/// surface it, while valid ones stay registered.
+fn register_hotkeys(app: &AppHandle, summon: &str) -> Result<(), String> {
+    let gs = app.global_shortcut();
+    // Clear the previous binding so a change fully replaces it.
+    let _ = gs.unregister_all();
+    let summon = summon.trim().to_lowercase();
+    if !summon.is_empty() {
+        gs.on_shortcut(summon.as_str(), |app, _shortcut, event| {
+            if event.state == ShortcutState::Pressed {
+                toggle_main(app);
+            }
+        })
+        .map_err(|e| format!("召唤键「{summon}」无效：{e}"))?;
+    }
+    Ok(())
+}
+
+/// Reload the global hotkey from a new accelerator string. Called by the main
+/// window whenever the hotkey settings change, so edits apply immediately
+/// without a restart. Returns the parse error (if any) for the UI to surface.
+#[tauri::command]
+fn reload_hotkeys(app: AppHandle, summon: String) -> Result<(), String> {
+    register_hotkeys(&app, &summon)
 }
 
 /// Pin (or unpin) the result overlay above every other window. Driven by the
@@ -160,6 +209,16 @@ fn agent_notify_start(app: AppHandle, cfg: AgentNotifySettings) -> bool {
 #[tauri::command]
 fn social_notify_start(app: AppHandle, cfg: social_notify::SocialNotifySettings) -> bool {
     social_notify::start(app, cfg)
+}
+
+/// Debug echo: the frontend calls this the instant `pet:social-notify` arrives,
+/// so a "[social_notify] frontend received" line in the terminal confirms the
+/// event crossed the Rust->webview boundary (vs. being emitted but never
+/// delivered). Temporary diagnostic for the WeChat-notify investigation.
+#[tauri::command]
+fn social_notify_ack() -> bool {
+    eprintln!("[social_notify] frontend received pet:social-notify");
+    true
 }
 
 #[tauri::command]
@@ -441,16 +500,11 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    // Global shortcut: Alt+Space focuses the bar from anywhere (plan §8). The
-    // handler fires on both press and release; focusing twice is harmless and
-    // avoids depending on the ShortcutEvent state API.
-    let global_shortcut = tauri_plugin_global_shortcut::Builder::new()
-        .with_shortcuts(["alt+space"])
-        .expect("invalid global shortcut spec")
-        .with_handler(|app, _shortcut, _event| {
-            focus_main(app);
-        })
-        .build();
+    // Global hotkeys are (un)registered at runtime from settings (see
+    // `register_hotkeys`), so the plugin is added with no startup shortcuts and
+    // no global handler — each binding carries its own handler via `on_shortcut`
+    // and is swapped on demand from `reload_hotkeys`.
+    let global_shortcut = tauri_plugin_global_shortcut::Builder::new().build();
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
@@ -470,6 +524,12 @@ pub fn run() {
             // needed / errors). Started only when the user enables it; a bind
             // failure (port taken) is logged inside start() and never fatal.
             if let Ok(s) = load_settings(app.handle().clone()) {
+                // Register the input-bar hotkeys from saved settings. Best-effort:
+                // a malformed accelerator is logged + skipped, never fatal (the bar
+                // is still focusable via the tray and re-registered on next change).
+                if let Err(e) = register_hotkeys(app.handle(), &s.hotkey.summon) {
+                    eprintln!("[bugzia] register hotkeys: {e}");
+                }
                 if s.agent_notify.enabled {
                     agent_notify::start(app.handle().clone(), agent_notify_config(&s.agent_notify));
                 }
@@ -518,6 +578,8 @@ pub fn run() {
             agent_notify_start,
             agent_notify_open_target,
             social_notify_start,
+            social_notify_ack,
+            reload_hotkeys,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

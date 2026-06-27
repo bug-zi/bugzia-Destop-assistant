@@ -409,6 +409,7 @@ export default function CommandCard() {
           note: ev.payload.note ?? cur.note,
           agent_notify: ev.payload.agent_notify ?? cur.agent_notify,
           social_notify: ev.payload.social_notify ?? cur.social_notify,
+          hotkey: ev.payload.hotkey ?? cur.hotkey,
         };
         update(merged);
         applyAppearanceVars(merged.appearance);
@@ -420,6 +421,18 @@ export default function CommandCard() {
       unlisten?.();
     };
   }, [update]);
+
+  // Hotkeys are registered by the Rust side. When the hotkey settings change
+  // (Settings edit OR the initial load), tell the backend to re-register so the
+  // new binding takes effect immediately. A parse error is bounced back to the
+  // settings window via `hotkey://error` so the user sees the offending combo.
+  useEffect(() => {
+    const hk = settings?.hotkey;
+    if (!hk) return;
+    void invoke("reload_hotkeys", { summon: hk.summon }).catch((e) => {
+      emitTo("settings", "hotkey://error", { message: String(e) }).catch(logErr("emit hotkey err"));
+    });
+  }, [settings?.hotkey.summon]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Agent notify can be enabled from Settings while Bugzia is already running.
   // The backend listener binds once; changing port/token still needs restart.

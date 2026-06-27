@@ -1,9 +1,11 @@
 import { useEffect, useState } from "react";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type {
   AgentNotifySettings,
   AppSettings,
   AppearanceSettings,
   AiSettings,
+  HotkeySettings,
   NoteSettings,
   PetSettings,
   ResultAppearanceSettings,
@@ -46,6 +48,8 @@ export default function SettingsPanel({ settings, onChange, onClose }: SettingsP
     onChange({ ...settings, agent_notify: { ...settings.agent_notify, ...p } });
   const patchSocialNotify = (p: Partial<SocialNotifySettings>) =>
     onChange({ ...settings, social_notify: { ...settings.social_notify, ...p } });
+  const patchHotkey = (p: Partial<HotkeySettings>) =>
+    onChange({ ...settings, hotkey: { ...settings.hotkey, ...p } });
 
   // API key lives in the OS keyring, separate from the JSON settings, so it has
   // its own local state + explicit save.
@@ -57,6 +61,9 @@ export default function SettingsPanel({ settings, onChange, onClose }: SettingsP
   const [testRes, setTestRes] = useState<{ ok: boolean; text: string } | null>(null);
   // Draft text for the "忽略目录名" add-row before it's committed to the list.
   const [ignoreDraft, setIgnoreDraft] = useState("");
+  // Inline error from the backend when an edited accelerator fails to parse
+  // (the main window reloads the hotkeys + emits `hotkey://error` on failure).
+  const [hkErr, setHkErr] = useState<string | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -67,6 +74,22 @@ export default function SettingsPanel({ settings, onChange, onClose }: SettingsP
     });
     return () => {
       alive = false;
+    };
+  }, []);
+
+  // Surface backend accelerator-parse errors (e.g. an unparseable combo) inline.
+  useEffect(() => {
+    let alive = true;
+    let un: UnlistenFn | undefined;
+    (async () => {
+      un = await listen<{ message: string }>("hotkey://error", (ev) => {
+        if (alive) setHkErr(ev.payload.message);
+      });
+      if (!alive && un) un();
+    })();
+    return () => {
+      alive = false;
+      un?.();
     };
   }, []);
 
@@ -153,6 +176,7 @@ export default function SettingsPanel({ settings, onChange, onClose }: SettingsP
   const n = settings.note;
   const an = settings.agent_notify;
   const sn = settings.social_notify;
+  const hk = settings.hotkey;
 
   return (
     <div className="settings-overlay" onClick={onClose}>
@@ -183,6 +207,20 @@ export default function SettingsPanel({ settings, onChange, onClose }: SettingsP
               </svg>
               锁定位置与大小（锁定后无法拖动或拉伸卡片）
             </label>
+          </section>
+
+          {/* ── 快捷键 ── */}
+          <section className="settings-section">
+            <h4>快捷键</h4>
+            <Field label="召唤输入框">
+              <input className="f-input" value={hk.summon}
+                placeholder="alt+space"
+                onChange={(e) => { setHkErr(null); patchHotkey({ summon: e.target.value }); }} />
+            </Field>
+            {hkErr && <div className="key-msg err">{hkErr}</div>}
+            <div className="hint">
+              召唤键再按一次即隐藏（切换）。格式为修饰键加按键，如 alt+space、ctrl+shift+p、win+space。修改后即时生效。
+            </div>
           </section>
 
           {/* ── 外观 ── */}
@@ -440,6 +478,14 @@ export default function SettingsPanel({ settings, onChange, onClose }: SettingsP
                 onChange={(e) => patchPet({ chat_enabled: e.target.checked })}
               />
               双击对话输入
+            </label>
+            <label className="check-row">
+              <input
+                type="checkbox"
+                checked={pet.debug_panel}
+                onChange={(e) => patchPet({ debug_panel: e.target.checked })}
+              />
+              开发调试面板（显示桌宠状态机 / 动作 / 优先级）
             </label>
             <Field label="口癖（每行一条）">
               <textarea
