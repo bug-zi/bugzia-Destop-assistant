@@ -8,6 +8,7 @@ import {
   NOTE_DESTROYED,
   NOTE_HYDRATE,
   NOTE_PINNED,
+  NOTE_PINNED_SYNC,
   NOTE_READY,
   NOTE_SETTINGS,
   noteIdFromLabel,
@@ -41,13 +42,40 @@ export default function NoteWindow() {
     const offs: UnlistenFn[] = [];
     (async () => {
       offs.push(
-        await listen<{ content: string; settings: NoteSettings }>(NOTE_HYDRATE, (ev) => {
+        await listen<{ id?: string; content: string; pinned?: boolean; settings: NoteSettings }>(NOTE_HYDRATE, (ev) => {
           if (!alive) return;
-          setContent(ev.payload.content ?? "");
-          draftRef.current = ev.payload.content ?? "";
+          // [临时诊断] 记录本窗口收到的每一条 hydrate，便于定位多便笺内容串台。
+          // 验证后移除。
+          console.debug("[bugzia-note] hydrate", { self: id, from: ev.payload.id, content: ev.payload.content });
+          // 多实例便笺共用 NOTE_HYDRATE 事件名——必须校验 id，只接受发给自己的
+          // hydrate。否则一旦事件投递溢出（别家便笺的 hydrate 到达本窗口），本
+          // 窗口内容会被那条的 content 覆盖，表现为"最后一张覆盖前面所有"。
+          if (ev.payload.id !== undefined && ev.payload.id !== id) {
+            console.warn("[bugzia-note] 收到别家 hydrate，已忽略", { self: id, from: ev.payload.id });
+            return;
+          }
+          const content = ev.payload.content ?? "";
+          setContent(content);
+          draftRef.current = content;
+          // 同步初始钉住态：快捷键呼出的便笺创建即为 pinned，重启恢复的 pinned
+          // 便笺也走这里——让按钮高亮与实际层级一致，否则用户不知它已置顶。
+          setPinned(ev.payload.pinned ?? false);
           const s = ev.payload.settings ?? DEFAULT_NOTE;
           setSettings(s);
           applyNoteVars(s);
+          // 空便笺（quick-create 路径）直接进入编辑并聚焦——双击编辑模型下，
+          // 一张空白便笺默认只渲染占位文字，自动进入编辑才符合"随时写"。
+          // /note 带内容与重启恢复的 pinned 便笺 content 非空，不会命中。
+          if (content === "") {
+            setEditing(true);
+            requestAnimationFrame(() => {
+              const ta = taRef.current;
+              if (ta) {
+                ta.focus();
+                ta.setSelectionRange(0, 0);
+              }
+            });
+          }
         }),
       );
       offs.push(
@@ -55,6 +83,14 @@ export default function NoteWindow() {
           if (!alive) return;
           setSettings(ev.payload);
           applyNoteVars(ev.payload);
+        }),
+      );
+      offs.push(
+        await listen<{ id: string; pinned: boolean }>(NOTE_PINNED_SYNC, (ev) => {
+          if (!alive) return;
+          // 多实例便笺共用事件名——只接受发给自己的（main 召唤升级本便笺时同步）。
+          if (ev.payload.id !== id) return;
+          setPinned(ev.payload.pinned);
         }),
       );
     })();

@@ -51,6 +51,13 @@ tiny_http = "0.12"
 # which a plain Tauri exe can't access).
 windows = { version = "0.56", features = [
   "Win32_Foundation",
+  "Win32_System_Com",
   "Win32_System_Diagnostics_ToolHelp",
+  "Win32_System_Ole",
+  "Win32_Storage_FileSystem",
+  "Win32_UI_Shell",
   "Win32_UI_WindowsAndMessaging",
 ] }
+# Stable, collision-free hash for shortcut-backup filenames (one backup per
+# .lnk path). Cheap and dependency-light.
+sha2 = "0.10"

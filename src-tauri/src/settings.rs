@@ -359,16 +359,27 @@ pub struct HotkeySettings {
     /// Accelerator to summon the input bar; toggles (hides) when already visible.
     #[serde(default = "default_hotkey_summon")]
     pub summon: String,
+    /// Accelerator to toggle all sticky notes: hides them if any are visible,
+    /// otherwise shows them; when no note exists at all it asks the main window
+    /// to spawn a blank one. Empty = skip (notes stay reachable only via the
+    /// `/note` command). Same `#[serde(default)]` rationale as `summon`.
+    #[serde(default = "default_hotkey_note")]
+    pub note: String,
 }
 
 fn default_hotkey_summon() -> String {
     "alt+space".to_string()
 }
 
+fn default_hotkey_note() -> String {
+    "alt+n".to_string()
+}
+
 impl Default for HotkeySettings {
     fn default() -> Self {
         Self {
             summon: default_hotkey_summon(),
+            note: default_hotkey_note(),
         }
     }
 }
@@ -916,5 +927,18 @@ mod tests {
         let parsed: AppSettings = serde_json::from_value(legacy).unwrap();
         assert!(parsed.system.autostart); // preserved
         assert_eq!(parsed.hotkey.summon, "alt+space"); // defaulted, not wiped
+    }
+
+    /// A settings.json whose `hotkey` section predates the `note` field must
+    /// still load — `note` defaults to "alt+n" via its field-level
+    /// `#[serde(default)]`, while the user's `summon` is preserved untouched.
+    #[test]
+    fn legacy_settings_with_hotkey_summon_only_loads_note_default() {
+        let legacy = serde_json::json!({
+            "hotkey": { "summon": "ctrl+k" }
+        });
+        let parsed: AppSettings = serde_json::from_value(legacy).unwrap();
+        assert_eq!(parsed.hotkey.summon, "ctrl+k"); // user value preserved
+        assert_eq!(parsed.hotkey.note, "alt+n"); // new field defaulted, not wiped
     }
 }

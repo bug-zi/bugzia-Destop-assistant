@@ -12,6 +12,7 @@
  *   edit / move / pin  -> NOTE_CHANGED / NOTE_GEOM / NOTE_PINNED  (note -> main)
  *   destroy            -> NOTE_DESTROYED {id}           (note -> main, then close)
  *   style change       -> NOTE_SETTINGS (broadcast)     (main -> all notes)
+ *   note hotkey (none) -> NOTE_QUICK_CREATE             (backend -> main)
  */
 
 export interface NoteRecord {
@@ -56,3 +57,15 @@ export const NOTE_PINNED = "note://pinned";
 export const NOTE_DESTROYED = "note://destroyed";
 /** note://settings — main -> broadcast style defaults. Payload: NoteSettings. */
 export const NOTE_SETTINGS = "note://settings";
+/** note://quick-create — backend -> main when the note hotkey fires and no note
+ *  window exists. Payload: none. Main responds by spawning a blank note. */
+export const NOTE_QUICK_CREATE = "note://quick-create";
+/** note://toggle — backend -> main when the note hotkey fires and at least one
+ *  note window exists. Payload: none. Main decides hide-vs-summon (and on summon
+ *  upgrades unpinned notes to pinned so they're actually visible). */
+export const NOTE_TOGGLE = "note://toggle";
+/** note://pinned-sync — main -> a specific note (emitTo). Payload: {id, pinned}.
+ *  Main pushes a pin change it made itself (e.g. summon upgrading an unpinned
+ *  note to pinned) so the note's pin button reflects the new state. The note
+ *  verifies the id is its own before applying (multi-instance, shared event). */
+export const NOTE_PINNED_SYNC = "note://pinned-sync";

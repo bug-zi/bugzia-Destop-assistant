@@ -120,6 +120,9 @@ export interface SystemSettings {
 export interface HotkeySettings {
   /** Accelerator to summon the input bar; toggles (hides) when already visible. */
   summon: string;
+  /** Accelerator to toggle all notes: hide if any visible, else show; spawns a
+   *  blank note when none exist. Empty = disabled. */
+  note: string;
 }
 
 /**
@@ -425,6 +428,7 @@ export const DEFAULT_SOCIAL_NOTIFY: SocialNotifySettings = {
 
 export const DEFAULT_HOTKEY: HotkeySettings = {
   summon: "alt+space", // 召唤键；已显示时再按一次即隐藏（切换）
+  note: "alt+n", // 便签键；有便签显示则收起，否则呼出，一条都没有则新建空白便签
 };
 
 export const DEFAULT_SETTINGS: AppSettings = {

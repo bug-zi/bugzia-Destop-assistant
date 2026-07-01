@@ -20,6 +20,26 @@ import { open, message } from "@tauri-apps/plugin-dialog";
 import { openPath } from "@tauri-apps/plugin-opener";
 import { invoke } from "@tauri-apps/api/core";
 import "./SettingsPanel.css";
+import HotkeyCenterPanel from "./HotkeyCenterPanel";
+
+/**
+ * 左侧分组导航:大类标题(不可点) + 叶项。叶项 key 与下方 settings-body 内各
+ * `<section>` 的守卫一一对应,点叶项只渲染对应模块,不再长列表滚动。
+ */
+const NAV: { title: string; leaves: { key: string; label: string }[] }[] = [
+  { title: "通用", leaves: [{ key: "card", label: "卡片" }, { key: "hotkeyCenter", label: "快捷键中心" }] },
+  {
+    title: "显示",
+    leaves: [
+      { key: "appearance", label: "外观" },
+      { key: "result", label: "结果面板" },
+      { key: "note", label: "便笺" },
+    ],
+  },
+  { title: "桌面组件", leaves: [{ key: "pet", label: "桌宠" }, { key: "waveform", label: "桌面波形" }] },
+  { title: "AI 与搜索", leaves: [{ key: "ai", label: "AI 接口" }, { key: "search", label: "搜索" }] },
+  { title: "通知", leaves: [{ key: "agent", label: "Agent 通知" }, { key: "social", label: "社交通知" }] },
+];
 
 interface SettingsPanelProps {
   settings: AppSettings;
@@ -64,6 +84,8 @@ export default function SettingsPanel({ settings, onChange, onClose }: SettingsP
   // Inline error from the backend when an edited accelerator fails to parse
   // (the main window reloads the hotkeys + emits `hotkey://error` on failure).
   const [hkErr, setHkErr] = useState<string | null>(null);
+  // 当前选中的侧栏叶项 key;只渲染对应分区。
+  const [active, setActive] = useState("card");
 
   useEffect(() => {
     let alive = true;
@@ -189,495 +211,532 @@ export default function SettingsPanel({ settings, onChange, onClose }: SettingsP
           </button>
         </div>
 
-        <div className="settings-body">
-          {/* ── 卡片 ── */}
-          <section className="settings-section">
-            <h4>卡片</h4>
-            <label className="check-row">
-              <input
-                type="checkbox"
-                checked={settings.window.locked}
-                onChange={(e) => patchWindow({ locked: e.target.checked })}
-              />
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
-                stroke="currentColor" strokeWidth="2" strokeLinecap="round"
-                strokeLinejoin="round" aria-hidden="true">
-                <rect x="4" y="11" width="16" height="10" rx="2" />
-                <path d="M8 11V7a4 4 0 0 1 8 0v4" />
-              </svg>
-              锁定位置与大小（锁定后无法拖动或拉伸卡片）
-            </label>
-          </section>
-
-          {/* ── 快捷键 ── */}
-          <section className="settings-section">
-            <h4>快捷键</h4>
-            <Field label="召唤输入框">
-              <input className="f-input" value={hk.summon}
-                placeholder="alt+space"
-                onChange={(e) => { setHkErr(null); patchHotkey({ summon: e.target.value }); }} />
-            </Field>
-            {hkErr && <div className="key-msg err">{hkErr}</div>}
-            <div className="hint">
-              召唤键再按一次即隐藏（切换）。格式为修饰键加按键，如 alt+space、ctrl+shift+p、win+space。修改后即时生效。
-            </div>
-          </section>
-
-          {/* ── 外观 ── */}
-          <section className="settings-section">
-            <h4>外观</h4>
-            <ColorField label="背景色"
-              r={a.bg_r} g={a.bg_g} b={a.bg_b}
-              onChange={(hex) => { const c = hexToRgb(hex); patchAppearance({ bg_r: c.r, bg_g: c.g, bg_b: c.b }); }} />
-            <ColorRow label="透明度" value={a.bg_a} min={0} max={1} step={0.01}
-              fmt={(v) => v.toFixed(2)} onChange={(v) => patchAppearance({ bg_a: v })} />
-            <ColorRow label="模糊" value={a.blur} min={0} max={40} step={1}
-              fmt={(v) => `${v}px`} onChange={(v) => patchAppearance({ blur: v })} />
-            <ColorRow label="圆角" value={a.radius} min={0} max={30} step={1}
-              fmt={(v) => `${v}px`} onChange={(v) => patchAppearance({ radius: v })} />
-            <ColorRow label="字号" value={a.font_scale} min={0.8} max={1.6} step={0.05}
-              fmt={(v) => `${v.toFixed(2)}×`} onChange={(v) => patchAppearance({ font_scale: v })} />
-          </section>
-
-          {/* ── 结果面板 ── */}
-          <section className="settings-section">
-            <h4>结果面板</h4>
-            <ColorField label="背景色"
-              r={r.bg_r} g={r.bg_g} b={r.bg_b}
-              onChange={(hex) => { const c = hexToRgb(hex); patchResult({ bg_r: c.r, bg_g: c.g, bg_b: c.b }); }} />
-            <ColorRow label="透明度" value={r.bg_a} min={0} max={1} step={0.01}
-              fmt={(v) => v.toFixed(2)} onChange={(v) => patchResult({ bg_a: v })} />
-            <ColorRow label="圆角" value={r.radius} min={0} max={30} step={1}
-              fmt={(v) => `${v}px`} onChange={(v) => patchResult({ radius: v })} />
-            <ColorRow label="模糊" value={r.blur} min={0} max={40} step={1}
-              fmt={(v) => `${v}px`} onChange={(v) => patchResult({ blur: v })} />
-            <ColorRow label="字号" value={r.font_scale} min={0.8} max={1.6} step={0.05}
-              fmt={(v) => `${v.toFixed(2)}×`} onChange={(v) => patchResult({ font_scale: v })} />
-            <ColorRow label="行间距" value={r.row_gap} min={0} max={16} step={1}
-              fmt={(v) => `${v}px`} onChange={(v) => patchResult({ row_gap: v })} />
-            <ColorRow label="列表项圆角" value={r.item_radius} min={0} max={20} step={1}
-              fmt={(v) => `${v}px`} onChange={(v) => patchResult({ item_radius: v })} />
-            <ColorRow label="行内边距" value={r.row_pad} min={0} max={16} step={1}
-              fmt={(v) => `${v}px`} onChange={(v) => patchResult({ row_pad: v })} />
-            <ColorRow label="悬停高亮" value={r.hover_alpha} min={0} max={1} step={0.01}
-              fmt={(v) => v.toFixed(2)} onChange={(v) => patchResult({ hover_alpha: v })} />
-            <ColorRow label="滚动条宽度" value={r.scrollbar_w} min={4} max={14} step={1}
-              fmt={(v) => `${v}px`} onChange={(v) => patchResult({ scrollbar_w: v })} />
-            <ColorField label="非锁定卡片颜色"
-              r={r.unlocked_r} g={r.unlocked_g} b={r.unlocked_b}
-              presets={UNLOCKED_COLOR_PRESETS}
-              onChange={(hex) => { const c = hexToRgb(hex); patchResult({ unlocked_r: c.r, unlocked_g: c.g, unlocked_b: c.b }); }} />
-            <ColorRow label="非锁定透明度" value={r.unlocked_a} min={0} max={0.8} step={0.01}
-              fmt={(v) => v.toFixed(2)} onChange={(v) => patchResult({ unlocked_a: v })} />
-            <ColorField label="锁定卡片颜色"
-              r={r.locked_r} g={r.locked_g} b={r.locked_b}
-              presets={LOCKED_COLOR_PRESETS}
-              onChange={(hex) => { const c = hexToRgb(hex); patchResult({ locked_r: c.r, locked_g: c.g, locked_b: c.b }); }} />
-            <ColorRow label="锁定透明度" value={r.locked_a} min={0} max={0.8} step={0.01}
-              fmt={(v) => v.toFixed(2)} onChange={(v) => patchResult({ locked_a: v })} />
-            <div className="hint">作用于历史对话侧栏的卡片：未锁定与已锁定各自可调颜色和透明度（半透明叠加）。点预设色块或用取色盘自选。</div>
-          </section>
-
-          {/* ── 桌面波形 ── */}
-          <section className="settings-section">
-            <h4>桌面波形</h4>
-            <label className="check-row">
-              <input type="checkbox" checked={wf.enabled}
-                onChange={(e) => patchWaveform({ enabled: e.target.checked })} />
-              启用桌面波形（采集系统声音，花瓣随音量飘落）
-            </label>
-            <label className="check-row">
-              <input type="checkbox" checked={wf.always_on_top}
-                onChange={(e) => patchWaveform({ always_on_top: e.target.checked })} />
-              置顶显示
-            </label>
-            <label className="check-row">
-              <input type="checkbox" checked={wf.locked}
-                onChange={(e) => patchWaveform({ locked: e.target.checked })} />
-              锁定（鼠标穿透，无法拖动）
-            </label>
-            <ColorRow label="透明度" value={wf.opacity} min={0.1} max={1} step={0.01}
-              fmt={(v) => v.toFixed(2)} onChange={(v) => patchWaveform({ opacity: v })} />
-            <ColorRow label="灵敏度" value={wf.sensitivity} min={0.1} max={3} step={0.1}
-              fmt={(v) => `${v.toFixed(1)}×`} onChange={(v) => patchWaveform({ sensitivity: v })} />
-            <ColorRow label="花瓣大小" value={wf.petal_size} min={4} max={40} step={1}
-              fmt={(v) => `${v}px`} onChange={(v) => patchWaveform({ petal_size: v })} />
-            <ColorRow label="花瓣密度" value={wf.petal_density} min={10} max={150} step={1}
-              fmt={(v) => String(v)} onChange={(v) => patchWaveform({ petal_density: v })} />
-            <ColorRow label="飘落速度" value={wf.drift_speed} min={0.2} max={3} step={0.1}
-              fmt={(v) => `${v.toFixed(1)}×`} onChange={(v) => patchWaveform({ drift_speed: v })} />
-            <ColorField label="主色"
-              r={wf.color_r} g={wf.color_g} b={wf.color_b}
-              onChange={(hex) => { const c = hexToRgb(hex); patchWaveform({ color_r: c.r, color_g: c.g, color_b: c.b }); }} />
-            <ColorField label="高光"
-              r={wf.accent_r} g={wf.accent_g} b={wf.accent_b}
-              onChange={(hex) => { const c = hexToRgb(hex); patchWaveform({ accent_r: c.r, accent_g: c.g, accent_b: c.b }); }} />
-            <div className="list-add-row">
-              <button className="key-btn" type="button"
-                onClick={() => patchWaveform({ x: -1, y: -1, w: 0 })}>
-                重置位置
-              </button>
-            </div>
-            <div className="hint">重置后按屏幕下方居中默认位置显示。</div>
-          </section>
-
-          {/* ── AI ── */}
-          <section className="settings-section">
-            <h4>AI 接口</h4>
-            <Field label="Provider 名称">
-              <input className="f-input" value={ai.provider_name} placeholder="例如 OpenAI / 中转"
-                onChange={(e) => patchAi({ provider_name: e.target.value })} />
-            </Field>
-            <Field label="Base URL">
-              <input className="f-input" value={ai.base_url} placeholder="https://api.openai.com/v1"
-                onChange={(e) => patchAi({ base_url: e.target.value })} />
-            </Field>
-            <Field label="Model">
-              <input className="f-input" value={ai.model} placeholder="gpt-4o-mini"
-                onChange={(e) => patchAi({ model: e.target.value })} />
-            </Field>
-            <Field label="API Key">
-              <div className="key-row">
-                <input className="f-input" type="password" value={apiKey}
-                  placeholder={keyLoaded ? "未设置" : "加载中…"}
-                  onChange={(e) => setApiKey(e.target.value)} />
-                <button className="key-btn" type="button" onClick={handleSaveKey}>保存</button>
-                <button className="key-btn ghost" type="button" onClick={handleClearKey}>清除</button>
-              </div>
-              {keyMsg && <div className={"key-msg " + (keyMsg.ok ? "ok" : "err")}>{keyMsg.text}</div>}
-              <div className="hint">仅存系统凭据管理器，不写入 JSON。</div>
-            </Field>
-            <Field label="连通测试">
-              <div className="key-row">
-                <button className="key-btn" type="button" onClick={handleTest} disabled={testing}>
-                  {testing ? "测试中…" : "测试连接"}
-                </button>
-              </div>
-              {testRes && (
-                <div className={"key-msg " + (testRes.ok ? "ok" : "err")}>{testRes.text}</div>
-              )}
-              <div className="hint">用当前 BaseURL / Model / API Key 发一条最小请求验证。</div>
-            </Field>
-            <Field label="System Prompt">
-              <textarea className="f-input" rows={3} value={ai.system_prompt}
-                placeholder="你是一个简洁的桌面助手，默认中文回答。"
-                onChange={(e) => patchAi({ system_prompt: e.target.value })} />
-            </Field>
-            <ColorRow label="Temperature" value={ai.temperature} min={0} max={2} step={0.1}
-              fmt={(v) => v.toFixed(1)} onChange={(v) => patchAi({ temperature: v })} />
-            <label className="check-row">
-              <input type="checkbox" checked={ai.stream}
-                onChange={(e) => patchAi({ stream: e.target.checked })} />
-              流式输出
-            </label>
-          </section>
-
-          {/* ── 搜索 ── */}
-          <section className="settings-section">
-            <h4>搜索</h4>
-            <Field label="默认搜索引擎">
-              <select className="f-input" value={settings.search.default_engine}
-                onChange={(e) => patchSearch({ default_engine: e.target.value })}>
-                {SEARCH_ENGINES.map((eng) => (
-                  <option key={eng.id} value={eng.id}>{eng.name}</option>
+        <div className="settings-shell">
+          <aside className="settings-nav">
+            {NAV.map((g) => (
+              <div className="settings-nav-group" key={g.title}>
+                <div className="settings-nav-title">{g.title}</div>
+                {g.leaves.map((l) => (
+                  <button
+                    key={l.key}
+                    type="button"
+                    className={"settings-nav-item" + (active === l.key ? " active" : "")}
+                    onClick={() => setActive(l.key)}
+                  >
+                    {l.label}
+                  </button>
                 ))}
-              </select>
-            </Field>
-            <Field label="自定义搜索 URL">
-              <input className="f-input" value={settings.search.custom_engine_url}
-                placeholder="https://example.com/search?q= (用 {q} 占位)"
-                onChange={(e) => patchSearch({ custom_engine_url: e.target.value })} />
-            </Field>
-
-            <Field label="搜索范围目录">
-              <div className="list-add-row">
-                <button className="key-btn" type="button" onClick={handlePickDir}>选择文件夹…</button>
               </div>
-              <StringList items={settings.search.index_dirs} onRemove={removeIndexDir} />
-              <div className="hint">桌面 / 文档 / 下载 默认已包含；点上方按钮追加其它目录。</div>
-            </Field>
+            ))}
+          </aside>
 
-            <Field label="忽略目录名">
-              <div className="list-add-row">
-                <input className="f-input" value={ignoreDraft}
-                  placeholder="例如 temp、缓存、备份"
-                  onChange={(e) => setIgnoreDraft(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") {
-                      e.preventDefault();
-                      addIgnoreDir();
+          <div className="settings-body">
+            {/* ── 卡片 ── */}
+            {active === "card" && (
+              <section className="settings-section">
+                <h4>卡片</h4>
+                <label className="check-row">
+                  <input
+                    type="checkbox"
+                    checked={settings.window.locked}
+                    onChange={(e) => patchWindow({ locked: e.target.checked })}
+                  />
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
+                    stroke="currentColor" strokeWidth="2" strokeLinecap="round"
+                    strokeLinejoin="round" aria-hidden="true">
+                    <rect x="4" y="11" width="16" height="10" rx="2" />
+                    <path d="M8 11V7a4 4 0 0 1 8 0v4" />
+                  </svg>
+                  锁定位置与大小（锁定后无法拖动或拉伸卡片）
+                </label>
+              </section>
+            )}
+
+            {/* ── 快捷键中心 ── */}
+            {active === "hotkeyCenter" && (
+              <HotkeyCenterPanel
+                hotkey={hk}
+                onPatchHotkey={patchHotkey}
+                hkErr={hkErr}
+                setHkErr={setHkErr}
+              />
+            )}
+
+            {/* ── 外观 ── */}
+            {active === "appearance" && (
+              <section className="settings-section">
+                <h4>外观</h4>
+                <ColorField label="背景色"
+                  r={a.bg_r} g={a.bg_g} b={a.bg_b}
+                  onChange={(hex) => { const c = hexToRgb(hex); patchAppearance({ bg_r: c.r, bg_g: c.g, bg_b: c.b }); }} />
+                <ColorRow label="透明度" value={a.bg_a} min={0} max={1} step={0.01}
+                  fmt={(v) => v.toFixed(2)} onChange={(v) => patchAppearance({ bg_a: v })} />
+                <ColorRow label="模糊" value={a.blur} min={0} max={40} step={1}
+                  fmt={(v) => `${v}px`} onChange={(v) => patchAppearance({ blur: v })} />
+                <ColorRow label="圆角" value={a.radius} min={0} max={30} step={1}
+                  fmt={(v) => `${v}px`} onChange={(v) => patchAppearance({ radius: v })} />
+                <ColorRow label="字号" value={a.font_scale} min={0.8} max={1.6} step={0.05}
+                  fmt={(v) => `${v.toFixed(2)}×`} onChange={(v) => patchAppearance({ font_scale: v })} />
+              </section>
+            )}
+
+            {/* ── 结果面板 ── */}
+            {active === "result" && (
+              <section className="settings-section">
+                <h4>结果面板</h4>
+                <ColorField label="背景色"
+                  r={r.bg_r} g={r.bg_g} b={r.bg_b}
+                  onChange={(hex) => { const c = hexToRgb(hex); patchResult({ bg_r: c.r, bg_g: c.g, bg_b: c.b }); }} />
+                <ColorRow label="透明度" value={r.bg_a} min={0} max={1} step={0.01}
+                  fmt={(v) => v.toFixed(2)} onChange={(v) => patchResult({ bg_a: v })} />
+                <ColorRow label="圆角" value={r.radius} min={0} max={30} step={1}
+                  fmt={(v) => `${v}px`} onChange={(v) => patchResult({ radius: v })} />
+                <ColorRow label="模糊" value={r.blur} min={0} max={40} step={1}
+                  fmt={(v) => `${v}px`} onChange={(v) => patchResult({ blur: v })} />
+                <ColorRow label="字号" value={r.font_scale} min={0.8} max={1.6} step={0.05}
+                  fmt={(v) => `${v.toFixed(2)}×`} onChange={(v) => patchResult({ font_scale: v })} />
+                <ColorRow label="行间距" value={r.row_gap} min={0} max={16} step={1}
+                  fmt={(v) => `${v}px`} onChange={(v) => patchResult({ row_gap: v })} />
+                <ColorRow label="列表项圆角" value={r.item_radius} min={0} max={20} step={1}
+                  fmt={(v) => `${v}px`} onChange={(v) => patchResult({ item_radius: v })} />
+                <ColorRow label="行内边距" value={r.row_pad} min={0} max={16} step={1}
+                  fmt={(v) => `${v}px`} onChange={(v) => patchResult({ row_pad: v })} />
+                <ColorRow label="悬停高亮" value={r.hover_alpha} min={0} max={1} step={0.01}
+                  fmt={(v) => v.toFixed(2)} onChange={(v) => patchResult({ hover_alpha: v })} />
+                <ColorRow label="滚动条宽度" value={r.scrollbar_w} min={4} max={14} step={1}
+                  fmt={(v) => `${v}px`} onChange={(v) => patchResult({ scrollbar_w: v })} />
+                <ColorField label="非锁定卡片颜色"
+                  r={r.unlocked_r} g={r.unlocked_g} b={r.unlocked_b}
+                  presets={UNLOCKED_COLOR_PRESETS}
+                  onChange={(hex) => { const c = hexToRgb(hex); patchResult({ unlocked_r: c.r, unlocked_g: c.g, unlocked_b: c.b }); }} />
+                <ColorRow label="非锁定透明度" value={r.unlocked_a} min={0} max={0.8} step={0.01}
+                  fmt={(v) => v.toFixed(2)} onChange={(v) => patchResult({ unlocked_a: v })} />
+                <ColorField label="锁定卡片颜色"
+                  r={r.locked_r} g={r.locked_g} b={r.locked_b}
+                  presets={LOCKED_COLOR_PRESETS}
+                  onChange={(hex) => { const c = hexToRgb(hex); patchResult({ locked_r: c.r, locked_g: c.g, locked_b: c.b }); }} />
+                <ColorRow label="锁定透明度" value={r.locked_a} min={0} max={0.8} step={0.01}
+                  fmt={(v) => v.toFixed(2)} onChange={(v) => patchResult({ locked_a: v })} />
+                <div className="hint">作用于历史对话侧栏的卡片：未锁定与已锁定各自可调颜色和透明度（半透明叠加）。点预设色块或用取色盘自选。</div>
+              </section>
+            )}
+
+            {/* ── 桌面波形 ── */}
+            {active === "waveform" && (
+              <section className="settings-section">
+                <h4>桌面波形</h4>
+                <label className="check-row">
+                  <input type="checkbox" checked={wf.enabled}
+                    onChange={(e) => patchWaveform({ enabled: e.target.checked })} />
+                  启用桌面波形（采集系统声音，花瓣随音量飘落）
+                </label>
+                <label className="check-row">
+                  <input type="checkbox" checked={wf.always_on_top}
+                    onChange={(e) => patchWaveform({ always_on_top: e.target.checked })} />
+                  置顶显示
+                </label>
+                <label className="check-row">
+                  <input type="checkbox" checked={wf.locked}
+                    onChange={(e) => patchWaveform({ locked: e.target.checked })} />
+                  锁定（鼠标穿透，无法拖动）
+                </label>
+                <ColorRow label="透明度" value={wf.opacity} min={0.1} max={1} step={0.01}
+                  fmt={(v) => v.toFixed(2)} onChange={(v) => patchWaveform({ opacity: v })} />
+                <ColorRow label="灵敏度" value={wf.sensitivity} min={0.1} max={3} step={0.1}
+                  fmt={(v) => `${v.toFixed(1)}×`} onChange={(v) => patchWaveform({ sensitivity: v })} />
+                <ColorRow label="花瓣大小" value={wf.petal_size} min={4} max={40} step={1}
+                  fmt={(v) => `${v}px`} onChange={(v) => patchWaveform({ petal_size: v })} />
+                <ColorRow label="花瓣密度" value={wf.petal_density} min={10} max={150} step={1}
+                  fmt={(v) => String(v)} onChange={(v) => patchWaveform({ petal_density: v })} />
+                <ColorRow label="飘落速度" value={wf.drift_speed} min={0.2} max={3} step={0.1}
+                  fmt={(v) => `${v.toFixed(1)}×`} onChange={(v) => patchWaveform({ drift_speed: v })} />
+                <ColorField label="主色"
+                  r={wf.color_r} g={wf.color_g} b={wf.color_b}
+                  onChange={(hex) => { const c = hexToRgb(hex); patchWaveform({ color_r: c.r, color_g: c.g, color_b: c.b }); }} />
+                <ColorField label="高光"
+                  r={wf.accent_r} g={wf.accent_g} b={wf.accent_b}
+                  onChange={(hex) => { const c = hexToRgb(hex); patchWaveform({ accent_r: c.r, accent_g: c.g, accent_b: c.b }); }} />
+                <div className="list-add-row">
+                  <button className="key-btn" type="button"
+                    onClick={() => patchWaveform({ x: -1, y: -1, w: 0 })}>
+                    重置位置
+                  </button>
+                </div>
+                <div className="hint">重置后按屏幕下方居中默认位置显示。</div>
+              </section>
+            )}
+
+            {/* ── AI ── */}
+            {active === "ai" && (
+              <section className="settings-section">
+                <h4>AI 接口</h4>
+                <Field label="Provider 名称">
+                  <input className="f-input" value={ai.provider_name} placeholder="例如 OpenAI / 中转"
+                    onChange={(e) => patchAi({ provider_name: e.target.value })} />
+                </Field>
+                <Field label="Base URL">
+                  <input className="f-input" value={ai.base_url} placeholder="https://api.openai.com/v1"
+                    onChange={(e) => patchAi({ base_url: e.target.value })} />
+                </Field>
+                <Field label="Model">
+                  <input className="f-input" value={ai.model} placeholder="gpt-4o-mini"
+                    onChange={(e) => patchAi({ model: e.target.value })} />
+                </Field>
+                <Field label="API Key">
+                  <div className="key-row">
+                    <input className="f-input" type="password" value={apiKey}
+                      placeholder={keyLoaded ? "未设置" : "加载中…"}
+                      onChange={(e) => setApiKey(e.target.value)} />
+                    <button className="key-btn" type="button" onClick={handleSaveKey}>保存</button>
+                    <button className="key-btn ghost" type="button" onClick={handleClearKey}>清除</button>
+                  </div>
+                  {keyMsg && <div className={"key-msg " + (keyMsg.ok ? "ok" : "err")}>{keyMsg.text}</div>}
+                  <div className="hint">仅存系统凭据管理器，不写入 JSON。</div>
+                </Field>
+                <Field label="连通测试">
+                  <div className="key-row">
+                    <button className="key-btn" type="button" onClick={handleTest} disabled={testing}>
+                      {testing ? "测试中…" : "测试连接"}
+                    </button>
+                  </div>
+                  {testRes && (
+                    <div className={"key-msg " + (testRes.ok ? "ok" : "err")}>{testRes.text}</div>
+                  )}
+                  <div className="hint">用当前 BaseURL / Model / API Key 发一条最小请求验证。</div>
+                </Field>
+                <Field label="System Prompt">
+                  <textarea className="f-input" rows={3} value={ai.system_prompt}
+                    placeholder="你是一个简洁的桌面助手，默认中文回答。"
+                    onChange={(e) => patchAi({ system_prompt: e.target.value })} />
+                </Field>
+                <ColorRow label="Temperature" value={ai.temperature} min={0} max={2} step={0.1}
+                  fmt={(v) => v.toFixed(1)} onChange={(v) => patchAi({ temperature: v })} />
+                <label className="check-row">
+                  <input type="checkbox" checked={ai.stream}
+                    onChange={(e) => patchAi({ stream: e.target.checked })} />
+                  流式输出
+                </label>
+              </section>
+            )}
+
+            {/* ── 搜索 ── */}
+            {active === "search" && (
+              <section className="settings-section">
+                <h4>搜索</h4>
+                <Field label="默认搜索引擎">
+                  <select className="f-input" value={settings.search.default_engine}
+                    onChange={(e) => patchSearch({ default_engine: e.target.value })}>
+                    {SEARCH_ENGINES.map((eng) => (
+                      <option key={eng.id} value={eng.id}>{eng.name}</option>
+                    ))}
+                  </select>
+                </Field>
+                <Field label="自定义搜索 URL">
+                  <input className="f-input" value={settings.search.custom_engine_url}
+                    placeholder="https://example.com/search?q= (用 {q} 占位)"
+                    onChange={(e) => patchSearch({ custom_engine_url: e.target.value })} />
+                </Field>
+
+                <Field label="搜索范围目录">
+                  <div className="list-add-row">
+                    <button className="key-btn" type="button" onClick={handlePickDir}>选择文件夹…</button>
+                  </div>
+                  <StringList items={settings.search.index_dirs} onRemove={removeIndexDir} />
+                  <div className="hint">桌面 / 文档 / 下载 默认已包含；点上方按钮追加其它目录。</div>
+                </Field>
+
+                <Field label="忽略目录名">
+                  <div className="list-add-row">
+                    <input className="f-input" value={ignoreDraft}
+                      placeholder="例如 temp、缓存、备份"
+                      onChange={(e) => setIgnoreDraft(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          e.preventDefault();
+                          addIgnoreDir();
+                        }
+                      }} />
+                    <button className="key-btn" type="button" onClick={addIgnoreDir}>添加</button>
+                  </div>
+                  <StringList items={settings.search.ignore_dirs} onRemove={removeIgnoreDir} />
+                  <div className="hint">按目录名最后一段匹配、忽略大小写；node_modules / .git 等已内置忽略。</div>
+                </Field>
+
+                <ColorRow label="结果上限" value={settings.search.max_results} min={1} max={500} step={1}
+                  fmt={(v) => String(v)} onChange={(v) => patchSearch({ max_results: v })} />
+              </section>
+            )}
+
+            {/* ── 桌宠 ── */}
+            {active === "pet" && (
+              <section className="settings-section">
+                <h4>桌宠</h4>
+                <label className="check-row">
+                  <input
+                    type="checkbox"
+                    checked={pet.enabled}
+                    onChange={(e) => patchPet({ enabled: e.target.checked })}
+                  />
+                  启用桌宠
+                </label>
+                <label className="check-row">
+                  <input
+                    type="checkbox"
+                    checked={pet.always_on_top}
+                    onChange={(e) => patchPet({ always_on_top: e.target.checked })}
+                  />
+                  置顶
+                </label>
+                <label className="check-row">
+                  <input
+                    type="checkbox"
+                    checked={pet.locked}
+                    onChange={(e) => patchPet({ locked: e.target.checked })}
+                  />
+                  锁定（鼠标穿透，不响应点击/拖动）
+                </label>
+                <ColorRow label="缩放" value={pet.scale} min={0.5} max={2} step={0.05}
+                  fmt={(v) => `${v.toFixed(2)}×`} onChange={(v) => patchPet({ scale: v })} />
+                <ColorRow label="眨眼间隔" value={pet.blink_interval_ms} min={1000} max={10000} step={500}
+                  fmt={(v) => `${v}ms`} onChange={(v) => patchPet({ blink_interval_ms: v })} />
+                <label className="check-row">
+                  <input
+                    type="checkbox"
+                    checked={pet.speech_enabled}
+                    onChange={(e) => patchPet({ speech_enabled: e.target.checked })}
+                  />
+                  随机说话
+                </label>
+                <ColorRow label="说话间隔" value={pet.speech_interval_ms} min={5000} max={60000} step={1000}
+                  fmt={(v) => `${(v / 1000).toFixed(0)}s`} onChange={(v) => patchPet({ speech_interval_ms: v })} />
+                <label className="check-row">
+                  <input
+                    type="checkbox"
+                    checked={pet.ai_speech_enabled}
+                    onChange={(e) => patchPet({ ai_speech_enabled: e.target.checked })}
+                  />
+                  AI 即兴说话
+                </label>
+                <ColorRow label="闲置 AI 间隔" value={pet.ai_idle_interval_ms} min={30000} max={300000} step={5000}
+                  fmt={(v) => `${(v / 1000).toFixed(0)}s`} onChange={(v) => patchPet({ ai_idle_interval_ms: v })} />
+                <ColorRow label="互动 AI 间隔" value={pet.ai_interaction_interval_ms} min={0} max={60000} step={1000}
+                  fmt={(v) => `${(v / 1000).toFixed(0)}s`} onChange={(v) => patchPet({ ai_interaction_interval_ms: v })} />
+                <label className="check-row">
+                  <input
+                    type="checkbox"
+                    checked={pet.chat_enabled}
+                    onChange={(e) => patchPet({ chat_enabled: e.target.checked })}
+                  />
+                  双击对话输入
+                </label>
+                <label className="check-row">
+                  <input
+                    type="checkbox"
+                    checked={pet.debug_panel}
+                    onChange={(e) => patchPet({ debug_panel: e.target.checked })}
+                  />
+                  开发调试面板（显示桌宠状态机 / 动作 / 优先级）
+                </label>
+                <Field label="口癖（每行一条）">
+                  <textarea
+                    className="f-input"
+                    rows={4}
+                    value={pet.speech_lines.join("\n")}
+                    onChange={(e) =>
+                      patchPet({
+                        speech_lines: e.target.value
+                          .split("\n")
+                          .filter((s, i, arr) => s !== "" || i < arr.length - 1),
+                      })
                     }
-                  }} />
-                <button className="key-btn" type="button" onClick={addIgnoreDir}>添加</button>
-              </div>
-              <StringList items={settings.search.ignore_dirs} onRemove={removeIgnoreDir} />
-              <div className="hint">按目录名最后一段匹配、忽略大小写；node_modules / .git 等已内置忽略。</div>
-            </Field>
+                  />
+                  <div className="hint">点击桌宠或空闲时会随机冒一条。</div>
+                </Field>
+                <Field label="素材">
+                  <div className="list-add-row">
+                    <button className="key-btn" type="button" onClick={handleOpenPetFolder}>
+                      打开素材文件夹…
+                    </button>
+                    <button
+                      className="key-btn ghost"
+                      type="button"
+                      onClick={() => patchPet({ x: -1, y: -1 })}
+                      title="下次显示时回到屏幕右下角"
+                    >
+                      重置位置
+                    </button>
+                  </div>
+                  <div className="hint">
+                    当前默认使用内置新角色素材；完整精灵图换肤会在动作配置接入后启用。
+                  </div>
+                </Field>
+              </section>
+            )}
 
-            <ColorRow label="结果上限" value={settings.search.max_results} min={1} max={500} step={1}
-              fmt={(v) => String(v)} onChange={(v) => patchSearch({ max_results: v })} />
-          </section>
+            {/* ── 便笺 ── */}
+            {active === "note" && (
+              <section className="settings-section">
+                <h4>便笺</h4>
+                <ColorField label="底色"
+                  r={n.bg_r} g={n.bg_g} b={n.bg_b}
+                  presets={NOTE_BG_PRESETS}
+                  onChange={(hex) => { const c = hexToRgb(hex); patchNote({ bg_r: c.r, bg_g: c.g, bg_b: c.b }); }} />
+                <ColorField label="字色"
+                  r={n.text_r} g={n.text_g} b={n.text_b}
+                  presets={NOTE_TEXT_PRESETS}
+                  onChange={(hex) => { const c = hexToRgb(hex); patchNote({ text_r: c.r, text_g: c.g, text_b: c.b }); }} />
+                <ColorRow label="宽度" value={n.w} min={160} max={480} step={10}
+                  fmt={(v) => `${v}px`} onChange={(v) => patchNote({ w: v })} />
+                <ColorRow label="高度" value={n.h} min={120} max={600} step={10}
+                  fmt={(v) => `${v}px`} onChange={(v) => patchNote({ h: v })} />
+                <ColorRow label="圆角" value={n.radius} min={0} max={30} step={1}
+                  fmt={(v) => `${v}px`} onChange={(v) => patchNote({ radius: v })} />
+                <ColorRow label="字号" value={n.font_size} min={10} max={28} step={1}
+                  fmt={(v) => `${v}px`} onChange={(v) => patchNote({ font_size: v })} />
+                <ColorRow label="背景透明度" value={n.bg_alpha} min={0.1} max={1} step={0.01}
+                  fmt={(v) => v.toFixed(2)} onChange={(v) => patchNote({ bg_alpha: v })} />
+                <ColorRow label="文字透明度" value={n.text_alpha} min={0.1} max={1} step={0.01}
+                  fmt={(v) => v.toFixed(2)} onChange={(v) => patchNote({ text_alpha: v })} />
+                <div className="hint">作为新生成便笺的默认样式；已打开的便笺也会实时跟随变化。</div>
+              </section>
+            )}
 
-          {/* ── 桌宠 ── */}
-          <section className="settings-section">
-            <h4>桌宠</h4>
-            <label className="check-row">
-              <input
-                type="checkbox"
-                checked={pet.enabled}
-                onChange={(e) => patchPet({ enabled: e.target.checked })}
-              />
-              启用桌宠
-            </label>
-            <label className="check-row">
-              <input
-                type="checkbox"
-                checked={pet.always_on_top}
-                onChange={(e) => patchPet({ always_on_top: e.target.checked })}
-              />
-              置顶
-            </label>
-            <label className="check-row">
-              <input
-                type="checkbox"
-                checked={pet.locked}
-                onChange={(e) => patchPet({ locked: e.target.checked })}
-              />
-              锁定（鼠标穿透，不响应点击/拖动）
-            </label>
-            <ColorRow label="缩放" value={pet.scale} min={0.5} max={2} step={0.05}
-              fmt={(v) => `${v.toFixed(2)}×`} onChange={(v) => patchPet({ scale: v })} />
-            <ColorRow label="眨眼间隔" value={pet.blink_interval_ms} min={1000} max={10000} step={500}
-              fmt={(v) => `${v}ms`} onChange={(v) => patchPet({ blink_interval_ms: v })} />
-            <label className="check-row">
-              <input
-                type="checkbox"
-                checked={pet.speech_enabled}
-                onChange={(e) => patchPet({ speech_enabled: e.target.checked })}
-              />
-              随机说话
-            </label>
-            <ColorRow label="说话间隔" value={pet.speech_interval_ms} min={5000} max={60000} step={1000}
-              fmt={(v) => `${(v / 1000).toFixed(0)}s`} onChange={(v) => patchPet({ speech_interval_ms: v })} />
-            <label className="check-row">
-              <input
-                type="checkbox"
-                checked={pet.ai_speech_enabled}
-                onChange={(e) => patchPet({ ai_speech_enabled: e.target.checked })}
-              />
-              AI 即兴说话
-            </label>
-            <ColorRow label="闲置 AI 间隔" value={pet.ai_idle_interval_ms} min={30000} max={300000} step={5000}
-              fmt={(v) => `${(v / 1000).toFixed(0)}s`} onChange={(v) => patchPet({ ai_idle_interval_ms: v })} />
-            <ColorRow label="互动 AI 间隔" value={pet.ai_interaction_interval_ms} min={0} max={60000} step={1000}
-              fmt={(v) => `${(v / 1000).toFixed(0)}s`} onChange={(v) => patchPet({ ai_interaction_interval_ms: v })} />
-            <label className="check-row">
-              <input
-                type="checkbox"
-                checked={pet.chat_enabled}
-                onChange={(e) => patchPet({ chat_enabled: e.target.checked })}
-              />
-              双击对话输入
-            </label>
-            <label className="check-row">
-              <input
-                type="checkbox"
-                checked={pet.debug_panel}
-                onChange={(e) => patchPet({ debug_panel: e.target.checked })}
-              />
-              开发调试面板（显示桌宠状态机 / 动作 / 优先级）
-            </label>
-            <Field label="口癖（每行一条）">
-              <textarea
-                className="f-input"
-                rows={4}
-                value={pet.speech_lines.join("\n")}
-                onChange={(e) =>
-                  patchPet({
-                    speech_lines: e.target.value
-                      .split("\n")
-                      .filter((s, i, arr) => s !== "" || i < arr.length - 1),
-                  })
-                }
-              />
-              <div className="hint">点击桌宠或空闲时会随机冒一条。</div>
-            </Field>
-            <Field label="素材">
-              <div className="list-add-row">
-                <button className="key-btn" type="button" onClick={handleOpenPetFolder}>
-                  打开素材文件夹…
-                </button>
-                <button
-                  className="key-btn ghost"
-                  type="button"
-                  onClick={() => patchPet({ x: -1, y: -1 })}
-                  title="下次显示时回到屏幕右下角"
-                >
-                  重置位置
-                </button>
-              </div>
-              <div className="hint">
-                当前默认使用内置新角色素材；完整精灵图换肤会在动作配置接入后启用。
-              </div>
-            </Field>
-          </section>
+            {/* ── Agent 通知 ── */}
+            {active === "agent" && (
+              <section className="settings-section">
+                <h4>Agent 通知</h4>
+                <label className="check-row">
+                  <input
+                    type="checkbox"
+                    checked={an.enabled}
+                    onChange={(e) => patchAgentNotify({ enabled: e.target.checked })}
+                  />
+                  启用（接收 Claude Code / Codex 的完成与待审批事件，由桌宠冒泡提醒）
+                </label>
+                <Field label="端口">
+                  <input
+                    className="f-input"
+                    type="number"
+                    min={1024}
+                    max={65535}
+                    value={an.port}
+                    onChange={(e) => {
+                      const v = Number(e.target.value);
+                      if (Number.isFinite(v)) patchAgentNotify({ port: v });
+                    }}
+                  />
+                </Field>
+                <Field label="Token（可选）">
+                  <input
+                    className="f-input"
+                    type="password"
+                    value={an.token ?? ""}
+                    placeholder="留空则不校验；设置后调用方需带 ?token="
+                    onChange={(e) => patchAgentNotify({ token: e.target.value || null })}
+                  />
+                </Field>
+                <label className="check-row">
+                  <input
+                    type="checkbox"
+                    checked={an.on_done}
+                    onChange={(e) => patchAgentNotify({ on_done: e.target.checked })}
+                  />
+                  任务完成时提醒
+                </label>
+                <label className="check-row">
+                  <input
+                    type="checkbox"
+                    checked={an.on_needs}
+                    onChange={(e) => patchAgentNotify({ on_needs: e.target.checked })}
+                  />
+                  需要审批 / 指示时提醒
+                </label>
+                <label className="check-row">
+                  <input
+                    type="checkbox"
+                    checked={an.on_error}
+                    onChange={(e) => patchAgentNotify({ on_error: e.target.checked })}
+                  />
+                  出错时提醒
+                </label>
+                <ColorRow label="冷却" value={an.cooldown_ms} min={0} max={60000} step={1000}
+                  fmt={(v) => (v <= 0 ? "关" : `${(v / 1000).toFixed(0)}s`)}
+                  onChange={(v) => patchAgentNotify({ cooldown_ms: v })} />
+                <label className="check-row">
+                  <input
+                    type="checkbox"
+                    checked={an.show_content}
+                    onChange={(e) => patchAgentNotify({ show_content: e.target.checked })}
+                  />
+                  气泡含内容摘要（会带出少量代理输出，注意隐私）
+                </label>
+                <label className="check-row">
+                  <input
+                    type="checkbox"
+                    checked={an.only_unfocused}
+                    onChange={(e) => patchAgentNotify({ only_unfocused: e.target.checked })}
+                  />
+                  仅在 Bugzia 未获焦点时提醒（正在看本应用时不打扰）
+                </label>
+                <div className="hint">
+                  事件由 Claude Code / Codex 的 hook POST 到本机此端口；运行中开启会立即生效，改端口或 token 需重启应用生效。hook 配置见 docs/agent-notify/。
+                </div>
+              </section>
+            )}
 
-          {/* ── 便笺 ── */}
-          <section className="settings-section">
-            <h4>便笺</h4>
-            <ColorField label="底色"
-              r={n.bg_r} g={n.bg_g} b={n.bg_b}
-              presets={NOTE_BG_PRESETS}
-              onChange={(hex) => { const c = hexToRgb(hex); patchNote({ bg_r: c.r, bg_g: c.g, bg_b: c.b }); }} />
-            <ColorField label="字色"
-              r={n.text_r} g={n.text_g} b={n.text_b}
-              presets={NOTE_TEXT_PRESETS}
-              onChange={(hex) => { const c = hexToRgb(hex); patchNote({ text_r: c.r, text_g: c.g, text_b: c.b }); }} />
-            <ColorRow label="宽度" value={n.w} min={160} max={480} step={10}
-              fmt={(v) => `${v}px`} onChange={(v) => patchNote({ w: v })} />
-            <ColorRow label="高度" value={n.h} min={120} max={600} step={10}
-              fmt={(v) => `${v}px`} onChange={(v) => patchNote({ h: v })} />
-            <ColorRow label="圆角" value={n.radius} min={0} max={30} step={1}
-              fmt={(v) => `${v}px`} onChange={(v) => patchNote({ radius: v })} />
-            <ColorRow label="字号" value={n.font_size} min={10} max={28} step={1}
-              fmt={(v) => `${v}px`} onChange={(v) => patchNote({ font_size: v })} />
-            <ColorRow label="背景透明度" value={n.bg_alpha} min={0.1} max={1} step={0.01}
-              fmt={(v) => v.toFixed(2)} onChange={(v) => patchNote({ bg_alpha: v })} />
-            <ColorRow label="文字透明度" value={n.text_alpha} min={0.1} max={1} step={0.01}
-              fmt={(v) => v.toFixed(2)} onChange={(v) => patchNote({ text_alpha: v })} />
-            <div className="hint">作为新生成便笺的默认样式；已打开的便笺也会实时跟随变化。</div>
-          </section>
-
-          {/* ── Agent 通知 ── */}
-          <section className="settings-section">
-            <h4>Agent 通知</h4>
-            <label className="check-row">
-              <input
-                type="checkbox"
-                checked={an.enabled}
-                onChange={(e) => patchAgentNotify({ enabled: e.target.checked })}
-              />
-              启用（接收 Claude Code / Codex 的完成与待审批事件，由桌宠冒泡提醒）
-            </label>
-            <Field label="端口">
-              <input
-                className="f-input"
-                type="number"
-                min={1024}
-                max={65535}
-                value={an.port}
-                onChange={(e) => {
-                  const v = Number(e.target.value);
-                  if (Number.isFinite(v)) patchAgentNotify({ port: v });
-                }}
-              />
-            </Field>
-            <Field label="Token（可选）">
-              <input
-                className="f-input"
-                type="password"
-                value={an.token ?? ""}
-                placeholder="留空则不校验；设置后调用方需带 ?token="
-                onChange={(e) => patchAgentNotify({ token: e.target.value || null })}
-              />
-            </Field>
-            <label className="check-row">
-              <input
-                type="checkbox"
-                checked={an.on_done}
-                onChange={(e) => patchAgentNotify({ on_done: e.target.checked })}
-              />
-              任务完成时提醒
-            </label>
-            <label className="check-row">
-              <input
-                type="checkbox"
-                checked={an.on_needs}
-                onChange={(e) => patchAgentNotify({ on_needs: e.target.checked })}
-              />
-              需要审批 / 指示时提醒
-            </label>
-            <label className="check-row">
-              <input
-                type="checkbox"
-                checked={an.on_error}
-                onChange={(e) => patchAgentNotify({ on_error: e.target.checked })}
-              />
-              出错时提醒
-            </label>
-            <ColorRow label="冷却" value={an.cooldown_ms} min={0} max={60000} step={1000}
-              fmt={(v) => (v <= 0 ? "关" : `${(v / 1000).toFixed(0)}s`)}
-              onChange={(v) => patchAgentNotify({ cooldown_ms: v })} />
-            <label className="check-row">
-              <input
-                type="checkbox"
-                checked={an.show_content}
-                onChange={(e) => patchAgentNotify({ show_content: e.target.checked })}
-              />
-              气泡含内容摘要（会带出少量代理输出，注意隐私）
-            </label>
-            <label className="check-row">
-              <input
-                type="checkbox"
-                checked={an.only_unfocused}
-                onChange={(e) => patchAgentNotify({ only_unfocused: e.target.checked })}
-              />
-              仅在 Bugzia 未获焦点时提醒（正在看本应用时不打扰）
-            </label>
-            <div className="hint">
-              事件由 Claude Code / Codex 的 hook POST 到本机此端口；运行中开启会立即生效，改端口或 token 需重启应用生效。hook 配置见 docs/agent-notify/。
-            </div>
-          </section>
-
-          <section className="settings-section">
-            <h4>社交通知</h4>
-            <label className="check-row">
-              <input
-                type="checkbox"
-                checked={sn.enabled}
-                onChange={(e) => patchSocialNotify({ enabled: e.target.checked })}
-              />
-              启用（监听 Windows 通知中心里的微信 / QQ / 钉钉提醒）
-            </label>
-            <label className="check-row">
-              <input
-                type="checkbox"
-                checked={sn.wechat}
-                onChange={(e) => patchSocialNotify({ wechat: e.target.checked })}
-              />
-              微信
-            </label>
-            <label className="check-row">
-              <input
-                type="checkbox"
-                checked={sn.qq}
-                onChange={(e) => patchSocialNotify({ qq: e.target.checked })}
-              />
-              QQ
-            </label>
-            <label className="check-row">
-              <input
-                type="checkbox"
-                checked={sn.dingtalk}
-                onChange={(e) => patchSocialNotify({ dingtalk: e.target.checked })}
-              />
-              钉钉
-            </label>
-            <ColorRow label="冷却" value={sn.cooldown_ms} min={0} max={60000} step={1000}
-              fmt={(v) => (v <= 0 ? "关" : `${(v / 1000).toFixed(0)}s`)}
-              onChange={(v) => patchSocialNotify({ cooldown_ms: v })} />
-            <label className="check-row">
-              <input
-                type="checkbox"
-                checked={sn.show_content}
-                onChange={(e) => patchSocialNotify({ show_content: e.target.checked })}
-              />
-              气泡含通知文字（会带出消息摘要，注意隐私）
-            </label>
-            <div className="hint">
-              使用 Windows 通知中心权限；首次启用可能弹出系统授权。只有对应软件向系统通知中心发送提醒时，桌宠才能收到。
-            </div>
-          </section>
+            {/* ── 社交通知 ── */}
+            {active === "social" && (
+              <section className="settings-section">
+                <h4>社交通知</h4>
+                <label className="check-row">
+                  <input
+                    type="checkbox"
+                    checked={sn.enabled}
+                    onChange={(e) => patchSocialNotify({ enabled: e.target.checked })}
+                  />
+                  启用（监听 Windows 通知中心里的微信 / QQ / 钉钉提醒）
+                </label>
+                <label className="check-row">
+                  <input
+                    type="checkbox"
+                    checked={sn.wechat}
+                    onChange={(e) => patchSocialNotify({ wechat: e.target.checked })}
+                  />
+                  微信
+                </label>
+                <label className="check-row">
+                  <input
+                    type="checkbox"
+                    checked={sn.qq}
+                    onChange={(e) => patchSocialNotify({ qq: e.target.checked })}
+                  />
+                  QQ
+                </label>
+                <label className="check-row">
+                  <input
+                    type="checkbox"
+                    checked={sn.dingtalk}
+                    onChange={(e) => patchSocialNotify({ dingtalk: e.target.checked })}
+                  />
+                  钉钉
+                </label>
+                <ColorRow label="冷却" value={sn.cooldown_ms} min={0} max={60000} step={1000}
+                  fmt={(v) => (v <= 0 ? "关" : `${(v / 1000).toFixed(0)}s`)}
+                  onChange={(v) => patchSocialNotify({ cooldown_ms: v })} />
+                <label className="check-row">
+                  <input
+                    type="checkbox"
+                    checked={sn.show_content}
+                    onChange={(e) => patchSocialNotify({ show_content: e.target.checked })}
+                  />
+                  气泡含通知文字（会带出消息摘要，注意隐私）
+                </label>
+                <div className="hint">
+                  使用 Windows 通知中心权限；首次启用可能弹出系统授权。只有对应软件向系统通知中心发送提醒时，桌宠才能收到。
+                </div>
+              </section>
+            )}
+          </div>
         </div>
       </div>
     </div>

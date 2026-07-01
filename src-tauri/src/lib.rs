@@ -2,9 +2,11 @@ mod agent_notify;
 mod ai;
 mod conversations;
 mod file_search;
+mod hotkey_center;
 mod notes;
 mod recyclebin;
 mod settings;
+mod shortcut_hotkeys;
 mod social_notify;
 mod waveform;
 mod weather;
@@ -23,13 +25,30 @@ use recyclebin::pet_eat_files;
 use settings::{
     clear_api_key, load_api_key, load_settings, save_api_key, save_settings, AgentNotifySettings,
 };
+use hotkey_center::{hotkey_center_detect_conflicts, hotkey_center_scan};
+use shortcut_hotkeys::{
+    shortcut_hotkey_clear, shortcut_hotkey_reveal, shortcut_hotkey_restore, shortcut_hotkey_set,
+    shortcut_hotkeys_scan,
+};
 
 use std::fs;
+#[cfg(target_os = "windows")]
+use std::mem::size_of;
 use std::path::PathBuf;
 use std::process::Command;
 
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
+#[cfg(target_os = "windows")]
+use windows::Win32::Foundation::{CloseHandle, HWND};
+#[cfg(target_os = "windows")]
+use windows::Win32::System::Diagnostics::ToolHelp::{
+    CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W, TH32CS_SNAPPROCESS,
+};
+#[cfg(target_os = "windows")]
+use windows::Win32::UI::WindowsAndMessaging::{
+    GetForegroundWindow, GetWindowTextW, GetWindowThreadProcessId,
+};
 
 #[cfg(target_os = "windows")]
 const HWND_BOTTOM: isize = 1;
@@ -87,35 +106,77 @@ fn toggle_main(app: &AppHandle) {
     }
 }
 
-/// (Re)register the input-bar global hotkey. Clears any previously registered
-/// shortcuts first so a settings change fully replaces the binding. The `summon`
-/// accelerator is registered via `on_shortcut` (independent of any global
-/// handler) and toggles the bar — one key both summons and dismisses it. An
-/// empty accelerator is skipped (leaving the bar summonable only via the tray);
-/// an unparseable one returns an error naming the offending combo so the UI can
-/// surface it, while valid ones stay registered.
-fn register_hotkeys(app: &AppHandle, summon: &str) -> Result<(), String> {
+/// Hand the note-set toggle to the main window. Main owns note state (which are
+/// pinned) and persistence, so it decides hide-vs-summon and — on summon —
+/// upgrades any unpinned (desktop-layer) notes to pinned (always-on-top) so they
+/// are actually visible instead of buried under fullscreen apps. The backend
+/// only checks whether ANY note window exists: none -> `note://quick-create`
+/// (spawn a blank one, the "write anytime" case); some -> `note://toggle`.
+///
+/// hide-keep model still holds: hiding only flips visibility, the WebView and
+/// its content/geometry stay in memory, no `NOTE_DESTROYED`. The pin upgrade on
+/// summon is the only persistence touch.
+fn toggle_notes(app: &AppHandle) {
+    let has_note = app
+        .webview_windows()
+        .into_iter()
+        .any(|(label, _)| label.starts_with("note-"));
+    if !has_note {
+        let _ = app.emit_to("main", "note://quick-create", ());
+        return;
+    }
+    let _ = app.emit_to("main", "note://toggle", ());
+}
+
+/// (Re)register the input-bar and note global hotkeys. Clears any previously
+/// registered shortcuts first so a settings change fully replaces both bindings
+/// together (clearing is all-or-nothing, so the two keys MUST be registered in
+/// the same call — otherwise reloading one would unregister the other). Each
+/// accelerator is bound via `on_shortcut` (independent of any global handler):
+/// `summon` toggles the input bar, `note` toggles the note set. An empty
+/// accelerator is skipped; an unparseable one is recorded as an error naming the
+/// offending combo. BOTH keys are always attempted so that one bad combo does
+/// not silently drop the other; all errors are joined and surfaced together.
+fn register_hotkeys(app: &AppHandle, summon: &str, note: &str) -> Result<(), String> {
     let gs = app.global_shortcut();
-    // Clear the previous binding so a change fully replaces it.
+    // Clear every previous binding so a change fully replaces them.
     let _ = gs.unregister_all();
     let summon = summon.trim().to_lowercase();
+    let note = note.trim().to_lowercase();
+    let mut errs: Vec<String> = Vec::new();
+
     if !summon.is_empty() {
-        gs.on_shortcut(summon.as_str(), |app, _shortcut, event| {
+        if let Err(e) = gs.on_shortcut(summon.as_str(), |app, _shortcut, event| {
             if event.state == ShortcutState::Pressed {
                 toggle_main(app);
             }
-        })
-        .map_err(|e| format!("召唤键「{summon}」无效：{e}"))?;
+        }) {
+            errs.push(format!("召唤键「{summon}」无效：{e}"));
+        }
     }
-    Ok(())
+    if !note.is_empty() {
+        if let Err(e) = gs.on_shortcut(note.as_str(), |app, _shortcut, event| {
+            if event.state == ShortcutState::Pressed {
+                toggle_notes(app);
+            }
+        }) {
+            errs.push(format!("便签键「{note}」无效：{e}"));
+        }
+    }
+
+    if errs.is_empty() {
+        Ok(())
+    } else {
+        Err(errs.join("；"))
+    }
 }
 
-/// Reload the global hotkey from a new accelerator string. Called by the main
+/// Reload the global hotkeys from new accelerator strings. Called by the main
 /// window whenever the hotkey settings change, so edits apply immediately
-/// without a restart. Returns the parse error (if any) for the UI to surface.
+/// without a restart. Returns any parse error(s) for the UI to surface.
 #[tauri::command]
-fn reload_hotkeys(app: AppHandle, summon: String) -> Result<(), String> {
-    register_hotkeys(&app, &summon)
+fn reload_hotkeys(app: AppHandle, summon: String, note: String) -> Result<(), String> {
+    register_hotkeys(&app, &summon, &note)
 }
 
 /// Pin (or unpin) the result overlay above every other window. Driven by the
@@ -236,6 +297,131 @@ fn agent_notify_open_target(payload: serde_json::Value) -> Result<bool, String> 
     focus_agent_window(&source, &cwd)
 }
 
+fn is_bugzia_content_window(label: &str) -> bool {
+    matches!(label, "main" | "result" | "settings") || label.starts_with("note-")
+}
+
+fn any_bugzia_content_window_focused(app: &AppHandle) -> bool {
+    app.webview_windows().into_iter().any(|(label, win)| {
+        is_bugzia_content_window(&label)
+            && win.is_visible().unwrap_or(false)
+            && win.is_focused().unwrap_or(false)
+    })
+}
+
+#[tauri::command]
+fn bugzia_any_content_window_focused(app: AppHandle) -> bool {
+    any_bugzia_content_window_focused(&app)
+}
+
+#[tauri::command]
+fn bugzia_should_suppress_agent_notify(app: AppHandle, payload: serde_json::Value) -> bool {
+    any_bugzia_content_window_focused(&app) || is_foreground_agent_window(&payload)
+}
+
+#[cfg(target_os = "windows")]
+fn is_foreground_agent_window(payload: &serde_json::Value) -> bool {
+    let source = payload.get("source").and_then(|v| v.as_str()).unwrap_or("");
+    let Some(front) = foreground_window_info() else {
+        return false;
+    };
+    foreground_matches_agent(source, &front.process_name, &front.title)
+}
+
+#[cfg(not(target_os = "windows"))]
+fn is_foreground_agent_window(_payload: &serde_json::Value) -> bool {
+    false
+}
+
+fn foreground_matches_agent(source: &str, process_name: &str, title: &str) -> bool {
+    let source = source.to_lowercase();
+    let process_name = process_name.to_lowercase();
+    let title = title.to_lowercase();
+    let host_process = is_agent_host_process(&process_name);
+
+    match source.as_str() {
+        "codex" => process_name.contains("codex") || (host_process && title.contains("codex")),
+        "claude" => process_name.contains("claude") || (host_process && title.contains("claude")),
+        _ => false,
+    }
+}
+
+fn is_agent_host_process(process_name: &str) -> bool {
+    matches!(
+        process_name,
+        "code.exe"
+            | "cursor.exe"
+            | "windowsterminal.exe"
+            | "wt.exe"
+            | "powershell.exe"
+            | "pwsh.exe"
+            | "cmd.exe"
+    )
+}
+
+#[cfg(target_os = "windows")]
+struct ForegroundWindowInfo {
+    process_name: String,
+    title: String,
+}
+
+#[cfg(target_os = "windows")]
+fn foreground_window_info() -> Option<ForegroundWindowInfo> {
+    let hwnd = unsafe { GetForegroundWindow() };
+    if hwnd == HWND(0) {
+        return None;
+    }
+
+    let mut pid = 0u32;
+    unsafe {
+        GetWindowThreadProcessId(hwnd, Some(&mut pid as *mut u32));
+    }
+    if pid == 0 {
+        return None;
+    }
+
+    Some(ForegroundWindowInfo {
+        process_name: process_name_for_pid(pid).unwrap_or_default(),
+        title: window_title(hwnd),
+    })
+}
+
+#[cfg(target_os = "windows")]
+fn window_title(hwnd: HWND) -> String {
+    let mut buf = [0u16; 512];
+    let len = unsafe { GetWindowTextW(hwnd, &mut buf) };
+    if len <= 0 {
+        return String::new();
+    }
+    String::from_utf16_lossy(&buf[..len as usize])
+}
+
+#[cfg(target_os = "windows")]
+fn process_name_for_pid(pid: u32) -> Option<String> {
+    let snapshot = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0).ok()? };
+    let mut entry = PROCESSENTRY32W {
+        dwSize: size_of::<PROCESSENTRY32W>() as u32,
+        ..Default::default()
+    };
+    let mut found = None;
+    let mut ok = unsafe { Process32FirstW(snapshot, &mut entry).is_ok() };
+    while ok {
+        if entry.th32ProcessID == pid {
+            found = Some(wide_nul_to_string(&entry.szExeFile));
+            break;
+        }
+        ok = unsafe { Process32NextW(snapshot, &mut entry).is_ok() };
+    }
+    let _ = unsafe { CloseHandle(snapshot) };
+    found
+}
+
+#[cfg(target_os = "windows")]
+fn wide_nul_to_string(buf: &[u16]) -> String {
+    let end = buf.iter().position(|&c| c == 0).unwrap_or(buf.len());
+    String::from_utf16_lossy(&buf[..end])
+}
+
 #[cfg(target_os = "windows")]
 fn focus_agent_window(source: &str, cwd: &str) -> Result<bool, String> {
     let script = r#"
@@ -277,10 +463,22 @@ if ($source -eq "codex") {
     $_.ProcessName -match "(?i)codex" -or $_.MainWindowTitle -match "(?i)codex"
   })
 } elseif ($source -eq "claude") {
-  $matches = @($wins | Where-Object {
-    $_.MainWindowTitle -match "(?i)claude|claude code" -or
-    $_.ProcessName -match "(?i)code|windowsterminal|wt|powershell|pwsh|cmd"
+  # Claude Code 没有独立窗口，跑在终端/IDE 宿主里。先排除属于 Codex 的窗口
+  # (进程名/标题含 codex)：否则 "Codex" 进程名里的 "code" 子串会被下面的宿主
+  # 进程规则误匹配，导致“立即前往”聚焦到 Codex 而不是 Claude。
+  $pool = @($wins | Where-Object {
+    $_.ProcessName -notmatch "(?i)codex" -and $_.MainWindowTitle -notmatch "(?i)codex"
   })
+  # 优先：标题明确含 claude（终端被 Claude Code TUI 改名的情况）。
+  $matches = @($pool | Where-Object { $_.MainWindowTitle -match "(?i)claude" })
+  # 退回：常见终端/IDE 宿主进程。用 ^...$ 锚定整个进程名，避免子串误伤
+  # （否则 "Codex" 会被 "code" 命中）；trae 用前缀覆盖 "Trae CN" 等变体。
+  if ($matches.Count -eq 0) {
+    $matches = @($pool | Where-Object {
+      $_.ProcessName -match "(?i)^(code|cursor|windowsterminal|wt|powershell|pwsh|cmd)$" -or
+      $_.ProcessName -match "(?i)^trae"
+    })
+  }
 }
 if ($leaf) {
   $byCwd = @($matches | Where-Object { $_.MainWindowTitle -like "*$leaf*" })
@@ -527,7 +725,7 @@ pub fn run() {
                 // Register the input-bar hotkeys from saved settings. Best-effort:
                 // a malformed accelerator is logged + skipped, never fatal (the bar
                 // is still focusable via the tray and re-registered on next change).
-                if let Err(e) = register_hotkeys(app.handle(), &s.hotkey.summon) {
+                if let Err(e) = register_hotkeys(app.handle(), &s.hotkey.summon, &s.hotkey.note) {
                     eprintln!("[bugzia] register hotkeys: {e}");
                 }
                 if s.agent_notify.enabled {
@@ -577,9 +775,18 @@ pub fn run() {
             note_set_layer,
             agent_notify_start,
             agent_notify_open_target,
+            bugzia_any_content_window_focused,
+            bugzia_should_suppress_agent_notify,
             social_notify_start,
             social_notify_ack,
             reload_hotkeys,
+            hotkey_center_scan,
+            hotkey_center_detect_conflicts,
+            shortcut_hotkeys_scan,
+            shortcut_hotkey_set,
+            shortcut_hotkey_clear,
+            shortcut_hotkey_restore,
+            shortcut_hotkey_reveal,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

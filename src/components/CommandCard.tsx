@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { LogicalPosition, LogicalSize } from "@tauri-apps/api/dpi";
 import { emit, emitTo, listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
@@ -41,8 +42,11 @@ import {
   NOTE_DESTROYED,
   NOTE_HYDRATE,
   NOTE_PINNED,
+  NOTE_PINNED_SYNC,
+  NOTE_QUICK_CREATE,
   NOTE_READY,
   NOTE_SETTINGS,
+  NOTE_TOGGLE,
   noteLabel,
   type NoteRecord,
 } from "../features/note/noteTypes";
@@ -429,10 +433,10 @@ export default function CommandCard() {
   useEffect(() => {
     const hk = settings?.hotkey;
     if (!hk) return;
-    void invoke("reload_hotkeys", { summon: hk.summon }).catch((e) => {
+    void invoke("reload_hotkeys", { summon: hk.summon, note: hk.note }).catch((e) => {
       emitTo("settings", "hotkey://error", { message: String(e) }).catch(logErr("emit hotkey err"));
     });
-  }, [settings?.hotkey.summon]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [settings?.hotkey.summon, settings?.hotkey.note]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Agent notify can be enabled from Settings while Bugzia is already running.
   // The backend listener binds once; changing port/token still needs restart.
@@ -776,6 +780,7 @@ export default function CommandCard() {
 
   // Hydrate a freshly-mounted note, then record edits / pin toggles / destroys.
   useEffect(() => {
+    let cancelled = false;
     const offs: UnlistenFn[] = [];
     (async () => {
       offs.push(
@@ -783,7 +788,11 @@ export default function CommandCard() {
           const rec = notesRef.current.find((n) => n.id === ev.payload.id);
           const ns = settingsRef.current?.note ?? DEFAULT_NOTE;
           emitTo(noteLabel(ev.payload.id), NOTE_HYDRATE, {
+            // 带 id：多实例便笺共用 NOTE_HYDRATE 事件名，接收端据此只认自己的，
+            // 防止事件投递溢出时用别家的 content 覆盖自己（"最后一张覆盖前面"）。
+            id: ev.payload.id,
             content: rec?.content ?? "",
+            pinned: rec?.pinned ?? false,
             settings: ns,
           }).catch(logErr("note hydrate"));
         }),
@@ -812,8 +821,28 @@ export default function CommandCard() {
           scheduleNotesSave();
         }),
       );
+      // Note hotkey fired with no note window -> spawn a blank one (backend
+      // emits this from toggle_notes; main owns note creation).
+      offs.push(
+        await listen(NOTE_QUICK_CREATE, () => {
+          void createBlankNote().catch(logErr("quick-create note"));
+        }),
+      );
+      offs.push(
+        await listen(NOTE_TOGGLE, () => {
+          void toggleNotes().catch(logErr("toggle notes"));
+        }),
+      );
+      // dev StrictMode 双挂载时 cleanup 可能在 listen 落定前先跑（此时 offs 仍
+      // 空，啥也没卸掉），那批 listener 就泄漏了——一次 emit 触发两次回调，
+      // NOTE_QUICK_CREATE 表现为一次按键新建两张便笺。全部 listen 落定后再查
+      // cancelled，若已被清理就把这一批自行卸掉。
+      if (cancelled) offs.forEach((off) => off());
     })();
-    return () => offs.forEach((off) => off());
+    return () => {
+      cancelled = true;
+      offs.forEach((off) => off());
+    };
   }, []);
 
   // Persist a note's geometry when the USER moves/resizes it (pinned notes
@@ -1112,7 +1141,7 @@ export default function CommandCard() {
   /** Spawn a fresh (temporary) note at the cascaded lower-right spot. The window
    *  is always-on-top from the start (desktop overlay) and only persisted to
    *  notes.json once the user pins it. Soft-capped at 50 open notes. */
-  async function spawnNote(text: string) {
+  async function spawnNote(text: string, pinned = false) {
     if (notesRef.current.length >= 50) {
       setStatusText("便笺已达上限（50）");
       window.setTimeout(() => setStatusText(""), 1500);
@@ -1126,12 +1155,68 @@ export default function CommandCard() {
       y: -1,
       w: s.w,
       h: s.h,
-      pinned: false,
+      pinned,
     };
     notesRef.current = [...notesRef.current, record];
     await createNoteWindow(record, { w: s.w, h: s.h }, notesRef.current).catch(logErr("create note"));
+    // 钉住的便笺纳入 notes.json（重启恢复）；临时便笺只在内存，退出即消失。
+    if (pinned) scheduleNotesSave();
     setStatusText("已生成便笺");
     window.setTimeout(() => setStatusText(""), 1500);
+  }
+
+  /** Spawn a blank note in response to NOTE_QUICK_CREATE (the note hotkey fired
+   *  with no note window). Created already PINNED (always-on-top): an unpinned
+   *  note sinks to the desktop layer and gets covered by app windows, defeating
+   *  "随时看/写". Reuses spawnNote so the 50-cap, default size, and positioning
+   *  stay consistent. Empty content is allowed here (the `/note` empty guard
+   *  lives in handleSubmit, not spawnNote). */
+  async function createBlankNote() {
+    await spawnNote("", true);
+  }
+
+  /** Alt+N 召唤/收起便笺集合（响应 NOTE_TOGGLE，由后端 toggle_notes 转发）。
+   *  收起判定只认「pinned 且可见」：unpinned 便笺在桌面层，即使 isVisible 也
+   *  常被全屏应用遮挡（用户实际看不到），若据 isVisible 判定展开态就会走收起，
+   *  导致快捷键在 hide/show 间空转——既看不到便笺，又因 notes 非空永不新建。
+   *  召唤时把所有 unpinned 升级为 pinned（置顶 + 持久化 + 同步按钮），保证可见。 */
+  async function toggleNotes() {
+    const notes = notesRef.current;
+    if (notes.length === 0) return;
+    let visiblePinned = 0;
+    for (const n of notes) {
+      if (!n.pinned) continue;
+      const win = await WebviewWindow.getByLabel(noteLabel(n.id));
+      if (win && (await win.isVisible().catch(() => false))) visiblePinned++;
+    }
+    if (visiblePinned > 0) {
+      for (const n of notes) {
+        const win = await WebviewWindow.getByLabel(noteLabel(n.id));
+        if (win) await win.hide().catch(() => {});
+      }
+      return;
+    }
+    // 召唤：先把所有 unpinned 升级为 pinned（置顶），再 show。
+    let pinChanged = false;
+    for (const n of notes) {
+      if (n.pinned) continue;
+      notesRef.current = notesRef.current.map((x) =>
+        x.id === n.id ? { ...x, pinned: true } : x,
+      );
+      await setNoteLayer(n.id, true).catch(logErr("note set_layer"));
+      emitTo(noteLabel(n.id), NOTE_PINNED_SYNC, { id: n.id, pinned: true }).catch(
+        logErr("note pinned-sync"),
+      );
+      pinChanged = true;
+    }
+    if (pinChanged) scheduleNotesSave();
+    for (const n of notes) {
+      const win = await WebviewWindow.getByLabel(noteLabel(n.id));
+      if (win) {
+        await win.show().catch(() => {});
+        await win.setFocus().catch(() => {});
+      }
+    }
   }
 
   /** Debounced persist of the PINNED subset only (temp notes live in memory and

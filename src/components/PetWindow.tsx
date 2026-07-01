@@ -1,7 +1,6 @@
 import { useEffect, useReducer, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import { cursorPosition, getCurrentWindow } from "@tauri-apps/api/window";
-import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { invoke } from "@tauri-apps/api/core";
 import { PhysicalPosition } from "@tauri-apps/api/dpi";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
@@ -76,6 +75,8 @@ const AI_FAILURE_INTERACTION_NOTICE_MIN_INTERVAL_MS = 8_000;
 const AI_UNAVAILABLE_LINE = "本女王暂时懒得回应。";
 const CHAT_AI_TIMEOUT_MS = 20_000;
 const CHAT_THINKING_LINE = "稍等，本女王正在想。";
+const AGENT_NOTIFY_RETRY_MS = 1_500;
+const AGENT_NOTIFY_PENDING_TTL_MS = 120_000;
 const PET_SOCIAL_NOTIFY = "pet:social-notify";
 
 const NOTICE_PRIORITY: Record<PetNoticePriority, number> = {
@@ -193,6 +194,12 @@ interface ActivePetNotice {
   expiresAt: number;
 }
 
+interface PendingAgentNotify {
+  key: string;
+  payload: PetAgentNotify;
+  expiresAt: number;
+}
+
 interface PetSocialNotify {
   source: "wechat" | "qq" | "dingtalk" | string;
   appName: string;
@@ -227,6 +234,8 @@ export default function PetWindow() {
   // on_* flags + show_content are enforced Rust-side before the event fires).
   const agentNotifyRef = useRef<AgentNotifySettings>(DEFAULT_AGENT_NOTIFY);
   const lastAgentNotifyAtRef = useRef<Record<string, number>>({});
+  const pendingAgentNotifyRef = useRef<PendingAgentNotify | null>(null);
+  const pendingAgentNotifyCheckingRef = useRef(false);
   const pendingCodexDoneTimerRef = useRef<number | null>(null);
   const pendingCodexDoneKeyRef = useRef("");
   const pendingCodexDoneScopeRef = useRef<{ sessionId?: string; cwd?: string } | null>(null);
@@ -295,6 +304,7 @@ export default function PetWindow() {
         }
         if (ev.payload?.agent_notify) {
           agentNotifyRef.current = { ...DEFAULT_AGENT_NOTIFY, ...ev.payload.agent_notify };
+          if (!agentNotifyRef.current.enabled) pendingAgentNotifyRef.current = null;
         }
       });
       if (!alive && un) un();
@@ -302,6 +312,7 @@ export default function PetWindow() {
     return () => {
       alive = false;
       un?.();
+      pendingAgentNotifyRef.current = null;
     };
   }, []);
 
@@ -356,6 +367,13 @@ export default function PetWindow() {
       alive = false;
       un?.();
     };
+  }, []);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      void flushPendingAgentNotifyIfReady();
+    }, AGENT_NOTIFY_RETRY_MS);
+    return () => window.clearInterval(timer);
   }, []);
 
   useEffect(() => {
@@ -657,6 +675,52 @@ export default function PetWindow() {
     );
   }
 
+  function agentNotifyKey(payload: PetAgentNotify): string {
+    return [
+      payload.source,
+      payload.kind,
+      payload.sessionId ?? "",
+      payload.cwd ?? "",
+      payload.summary ?? "",
+      String(payload.receivedAt),
+    ].join("|");
+  }
+
+  function deferAgentNotify(payload: PetAgentNotify) {
+    pendingAgentNotifyRef.current = {
+      key: agentNotifyKey(payload),
+      payload,
+      expiresAt: Date.now() + AGENT_NOTIFY_PENDING_TTL_MS,
+    };
+  }
+
+  function clearPendingAgentNotify(payload?: PetAgentNotify) {
+    if (!payload || pendingAgentNotifyRef.current?.key === agentNotifyKey(payload)) {
+      pendingAgentNotifyRef.current = null;
+    }
+  }
+
+  async function flushPendingAgentNotifyIfReady() {
+    const pending = pendingAgentNotifyRef.current;
+    if (!pending || pendingAgentNotifyCheckingRef.current) return;
+    const now = Date.now();
+    if (pending.expiresAt <= now) {
+      pendingAgentNotifyRef.current = null;
+      return;
+    }
+    pendingAgentNotifyCheckingRef.current = true;
+    try {
+      const suppress = agentNotifyRef.current.only_unfocused
+        ? await shouldSuppressAgentNotify(pending.payload)
+        : false;
+      if (!suppress && pendingAgentNotifyRef.current?.key === pending.key) {
+        showAgentNotify(pending.payload);
+      }
+    } finally {
+      pendingAgentNotifyCheckingRef.current = false;
+    }
+  }
+
   function showAiFailureNotice(priority: PetNoticePriority) {
     const now = Date.now();
     const minInterval =
@@ -712,20 +776,11 @@ export default function PetWindow() {
     applyRuntimeEvent("search_input", aiAction);
   }
 
-  /** Best-effort "is any Bugzia window focused right now?" Backs the
-   *  agent-notify only_unfocused gate. The pet window's ACL may forbid
-   *  cross-window focus queries; on any error we resolve false (fail-open). */
-  async function isAnyBugziaFocused(): Promise<boolean> {
+  /** Best-effort focus gate for agent-notify. Suppresses while the user is
+   *  viewing Bugzia content or the matching Codex/Claude foreground window. */
+  async function shouldSuppressAgentNotify(payload: PetAgentNotify): Promise<boolean> {
     try {
-      const all = await WebviewWindow.getAll();
-      for (const w of all) {
-        try {
-          if (await w.isFocused()) return true;
-        } catch {
-          // A specific window may reject on ACL; ignore it and keep checking.
-        }
-      }
-      return false;
+      return await invoke<boolean>("bugzia_should_suppress_agent_notify", { payload });
     } catch {
       return false;
     }
@@ -792,7 +847,6 @@ export default function PetWindow() {
       const last = lastAgentNotifyAtRef.current[payload.kind] ?? 0;
       if (now - last < cooldown) return;
     }
-    lastAgentNotifyAtRef.current[payload.kind] = now;
 
     const fire = () => {
       const reaction = AGENT_NOTIFY_REACTION[payload.kind] ?? AGENT_NOTIFY_REACTION.needs;
@@ -810,16 +864,24 @@ export default function PetWindow() {
         runtimeEventForAgentNotify(payload),
       );
       if (noticeId != null) {
+        lastAgentNotifyAtRef.current[payload.kind] = Date.now();
+        clearPendingAgentNotify(payload);
         setAgentAction(payload);
       }
     };
 
     if (cfg.only_unfocused) {
-      void isAnyBugziaFocused()
-        .then((focused) => {
-          if (!focused) fire();
+      void shouldSuppressAgentNotify(payload)
+        .then((suppress) => {
+          if (suppress) {
+            deferAgentNotify(payload);
+          } else {
+            fire();
+          }
         })
-        .catch(() => fire());
+        .catch(() => {
+          fire();
+        });
     } else {
       fire();
     }
