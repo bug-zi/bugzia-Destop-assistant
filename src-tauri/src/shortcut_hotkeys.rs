@@ -98,7 +98,10 @@ fn key_to_vk(k: &NormalizedKey) -> Option<u8> {
 fn allowed_roots() -> Vec<(ShortcutLocation, PathBuf)> {
     let mut out: Vec<(ShortcutLocation, PathBuf)> = Vec::new();
     if let Ok(up) = std::env::var("USERPROFILE") {
-        out.push((ShortcutLocation::UserDesktop, PathBuf::from(up).join("Desktop")));
+        out.push((
+            ShortcutLocation::UserDesktop,
+            PathBuf::from(up).join("Desktop"),
+        ));
     }
     let public = std::env::var("PUBLIC")
         .ok()
@@ -190,8 +193,8 @@ type LnkMeta = (Option<u16>, String, String);
 fn read_all_lnk(paths: Vec<PathBuf>) -> Vec<Result<LnkMeta, String>> {
     use windows::core::{Interface, PCWSTR};
     use windows::Win32::System::Com::{
-        CoCreateInstance, CoInitializeEx, CoUninitialize, CLSCTX_ALL, COINIT_APARTMENTTHREADED,
-        IPersistFile, STGM_READ,
+        CoCreateInstance, CoInitializeEx, CoUninitialize, IPersistFile, CLSCTX_ALL,
+        COINIT_APARTMENTTHREADED, STGM_READ,
     };
     use windows::Win32::UI::Shell::{IShellLinkW, ShellLink, SLGP_RAWPATH};
 
@@ -254,7 +257,11 @@ fn read_all_lnk(paths: Vec<PathBuf>) -> Vec<Result<LnkMeta, String>> {
                     .GetArguments(&mut abuf)
                     .map(|_| widestr_to_string(&abuf))
                     .unwrap_or_default();
-                out.push(Ok((if word == 0 { None } else { Some(word) }, target, args)));
+                out.push(Ok((
+                    if word == 0 { None } else { Some(word) },
+                    target,
+                    args,
+                )));
             }
             CoUninitialize();
         }
@@ -266,7 +273,10 @@ fn read_all_lnk(paths: Vec<PathBuf>) -> Vec<Result<LnkMeta, String>> {
 
 #[cfg(not(target_os = "windows"))]
 fn read_all_lnk(paths: Vec<PathBuf>) -> Vec<Result<LnkMeta, String>> {
-    paths.into_iter().map(|_| Err("不支持当前系统".into())).collect()
+    paths
+        .into_iter()
+        .map(|_| Err("不支持当前系统".into()))
+        .collect()
 }
 
 /// 把单个 `.lnk` 的 Hotkey 改写为 `word`（`None` = 清空，写 0）。
@@ -275,8 +285,8 @@ fn write_lnk_hotkey(path: &Path, word: Option<u16>) -> Result<(), String> {
     use windows::core::{Interface, PCWSTR};
     use windows::Win32::Foundation::BOOL;
     use windows::Win32::System::Com::{
-        CoCreateInstance, CoInitializeEx, CoUninitialize, CLSCTX_ALL, COINIT_APARTMENTTHREADED,
-        IPersistFile, STGM_READWRITE,
+        CoCreateInstance, CoInitializeEx, CoUninitialize, IPersistFile, CLSCTX_ALL,
+        COINIT_APARTMENTTHREADED, STGM_READWRITE,
     };
     use windows::Win32::UI::Shell::{IShellLinkW, ShellLink};
 
@@ -288,17 +298,22 @@ fn write_lnk_hotkey(path: &Path, word: Option<u16>) -> Result<(), String> {
         let res = (|| -> Result<(), String> {
             unsafe {
                 let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
-                let shell: IShellLinkW =
-                    CoCreateInstance(&ShellLink, None, CLSCTX_ALL).map_err(|e| format!("CoCreateInstance: {e}"))?;
-                let persist: IPersistFile =
-                    shell.cast().map_err(|e| format!("cast IPersistFile: {e}"))?;
+                let shell: IShellLinkW = CoCreateInstance(&ShellLink, None, CLSCTX_ALL)
+                    .map_err(|e| format!("CoCreateInstance: {e}"))?;
+                let persist: IPersistFile = shell
+                    .cast()
+                    .map_err(|e| format!("cast IPersistFile: {e}"))?;
                 let pcw = PCWSTR::from_raw(wide.as_ptr());
                 // 先 Load 保留其它字段，再改 Hotkey，再 Save 回原路径。
-                persist.Load(pcw, STGM_READWRITE).map_err(|e| format!("Load: {e}"))?;
+                persist
+                    .Load(pcw, STGM_READWRITE)
+                    .map_err(|e| format!("Load: {e}"))?;
                 shell
                     .SetHotkey(word_v.unwrap_or(0))
                     .map_err(|e| format!("SetHotkey: {e}"))?;
-                persist.Save(pcw, BOOL(1)).map_err(|e| format!("Save: {e}"))?;
+                persist
+                    .Save(pcw, BOOL(1))
+                    .map_err(|e| format!("Save: {e}"))?;
             }
             Ok(())
         })();
@@ -477,8 +492,10 @@ pub fn scan_shortcuts_internal(app: &AppHandle) -> Vec<ShortcutHotkeyItem> {
     found.retain(|(p, _)| !hidden.contains(&normalize_hidden_path(&p.to_string_lossy())));
     let paths: Vec<PathBuf> = found.iter().map(|(p, _)| p.clone()).collect();
     let metas = read_all_lnk(paths);
-    let backed: std::collections::HashSet<String> =
-        load_manifest(app).into_iter().map(|e| e.original_path).collect();
+    let backed: std::collections::HashSet<String> = load_manifest(app)
+        .into_iter()
+        .map(|e| e.original_path)
+        .collect();
 
     let mut out = Vec::with_capacity(found.len());
     for (i, (p, loc)) in found.iter().enumerate() {
@@ -519,10 +536,7 @@ pub fn scan_shortcuts_internal(app: &AppHandle) -> Vec<ShortcutHotkeyItem> {
 /// 重新读取单个 `.lnk` 构造明细（供 set/clear/restore 返回最新状态）。
 fn build_item(app: &AppHandle, lnk_path: &Path) -> Result<ShortcutHotkeyItem, String> {
     let (location, allowed) = classify_path(lnk_path);
-    let path_str = lnk_path
-        .to_str()
-        .ok_or("path not utf-8")?
-        .to_string();
+    let path_str = lnk_path.to_str().ok_or("path not utf-8")?.to_string();
     let name = lnk_path
         .file_stem()
         .and_then(|s| s.to_str())
@@ -605,7 +619,10 @@ pub fn shortcut_hotkey_set(
 }
 
 #[tauri::command]
-pub fn shortcut_hotkey_clear(app: AppHandle, shortcut_path: String) -> Result<ShortcutHotkeyItem, String> {
+pub fn shortcut_hotkey_clear(
+    app: AppHandle,
+    shortcut_path: String,
+) -> Result<ShortcutHotkeyItem, String> {
     let path = PathBuf::from(&shortcut_path);
     let (_, allowed) = classify_path(&path);
     if !allowed {
@@ -630,8 +647,8 @@ pub fn shortcut_hotkey_restore(
     if !allowed {
         return Err("出于安全限制，Bugzia 不修改此位置".into());
     }
-    let latest = latest_backup_for(&app, &shortcut_path)
-        .ok_or_else(|| "没有可恢复的备份".to_string())?;
+    let latest =
+        latest_backup_for(&app, &shortcut_path).ok_or_else(|| "没有可恢复的备份".to_string())?;
     let backup_path = backup_root(&app)?.join(&latest.backup_file);
     fs::copy(&backup_path, &path).map_err(|e| format!("恢复失败：{e}"))?;
     build_item(&app, &path)

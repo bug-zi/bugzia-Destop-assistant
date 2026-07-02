@@ -203,10 +203,15 @@ export default function SettingsPanel({ settings, onChange, onClose }: SettingsP
   return (
     <div className="settings-overlay" onClick={onClose}>
       <div className="settings-panel" onClick={(e) => e.stopPropagation()}>
-        <div className="settings-drag" data-tauri-drag-region title="拖动设置窗口" />
+        <div className="settings-drag" />
         <div className="settings-head">
           <span className="settings-title">设置</span>
-          <button className="settings-close" type="button" onClick={onClose} title="关闭">
+          <button
+            className="settings-close"
+            type="button"
+            onClick={onClose}
+            title="关闭"
+          >
             ✕
           </button>
         </div>

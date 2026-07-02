@@ -1,5 +1,12 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { HotkeyEntry, ManualHotkeyEntry, ManualHotkeyInput } from "./hotkeyTypes";
+import type {
+  HotkeyEntry,
+  HotkeyObserverStatus,
+  ManualHotkeyEntry,
+  ManualHotkeyInput,
+  ObservedHotkeyEntry,
+  RunningAppInfo,
+} from "./hotkeyTypes";
 
 /**
  * 汇总所有已支持来源（Bugzia 自身 + .lnk 快捷方式），不做冲突计算。
@@ -34,6 +41,45 @@ export async function listManualHotkeyEntries(): Promise<ManualHotkeyEntry[]> {
     console.error("[bugzia] manual_hotkey_entries_list failed", e);
     return [];
   }
+}
+
+export async function listRunningApps(): Promise<RunningAppInfo[]> {
+  try {
+    return await invoke<RunningAppInfo[]>("running_apps_list");
+  } catch (e) {
+    console.error("[bugzia] running_apps_list failed", e);
+    return [];
+  }
+}
+
+export async function setHotkeyObserverEnabled(enabled: boolean): Promise<HotkeyObserverStatus> {
+  return await invoke<HotkeyObserverStatus>("hotkey_observer_set_enabled", { enabled });
+}
+
+export async function getHotkeyObserverStatus(): Promise<HotkeyObserverStatus> {
+  try {
+    return await invoke<HotkeyObserverStatus>("hotkey_observer_status");
+  } catch (e) {
+    console.error("[bugzia] hotkey_observer_status failed", e);
+    return { enabled: false };
+  }
+}
+
+export async function listObservedHotkeys(): Promise<ObservedHotkeyEntry[]> {
+  try {
+    return await invoke<ObservedHotkeyEntry[]>("observed_hotkeys_list");
+  } catch (e) {
+    console.error("[bugzia] observed_hotkeys_list failed", e);
+    return [];
+  }
+}
+
+export async function promoteObservedHotkey(observedId: string): Promise<ManualHotkeyEntry> {
+  return await invoke<ManualHotkeyEntry>("observed_hotkey_promote", { observedId });
+}
+
+export async function removeObservedHotkey(observedId: string): Promise<boolean> {
+  return await invoke<boolean>("observed_hotkey_remove", { observedId });
 }
 
 export async function addManualHotkeyEntry(input: ManualHotkeyInput): Promise<ManualHotkeyEntry> {

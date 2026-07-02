@@ -13,7 +13,10 @@ export type ManageLevel =
   | "HighRisk";
 
 export interface ConflictInfo {
+  /** 真正的重复占用：两个会互相抢占的快捷键使用了同一组合。 */
   is_duplicate: boolean;
+  /** 自定义快捷键覆盖了 Windows 只读目录里的低风险系统键。 */
+  is_system_override: boolean;
   conflicts_with_bugzia: boolean;
   /** 同组其它条目 id，供 UI 高亮。 */
   conflicting_with: string[];
@@ -28,6 +31,10 @@ export interface HotkeyEntry {
   title: string;
   /** 来源应用名（Bugzia / 目标程序名）。 */
   app_name: string;
+  /** 手动登记应用的进程名，例如 KuGou.exe。其它来源为 null。 */
+  process_name: string | null;
+  /** 手动登记应用的窗口标题匹配词。其它来源为 null。 */
+  window_title_match: string | null;
   source_type: HotkeySourceType;
   scope: HotkeyScope;
   manage_level: ManageLevel;
@@ -42,6 +49,8 @@ export interface HotkeyEntry {
 
 export interface ManualHotkeyInput {
   app_name: string;
+  process_name: string;
+  window_title_match: string;
   title: string;
   accelerator: string;
   scope: HotkeyScope;
@@ -50,6 +59,27 @@ export interface ManualHotkeyInput {
 
 export interface ManualHotkeyEntry extends ManualHotkeyInput {
   id: string;
+}
+
+export interface RunningAppInfo {
+  process_name: string;
+  window_title: string;
+  pid: number;
+}
+
+export interface ObservedHotkeyEntry {
+  id: string;
+  app_name: string;
+  process_name: string;
+  window_title: string;
+  accelerator: string;
+  count: number;
+  first_seen_ms: number;
+  last_seen_ms: number;
+}
+
+export interface HotkeyObserverStatus {
+  enabled: boolean;
 }
 
 export type ShortcutLocation =

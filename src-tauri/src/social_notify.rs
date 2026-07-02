@@ -153,7 +153,10 @@ fn run_listener(app: AppHandle, config: Arc<RwLock<SocialNotifySettings>>) {
     let mut pending_not_impl_log = true;
 
     loop {
-        let cfg = config.read().map(|current| current.clone()).unwrap_or_default();
+        let cfg = config
+            .read()
+            .map(|current| current.clone())
+            .unwrap_or_default();
         if !cfg.enabled {
             prev.clear();
             primed = false;
@@ -173,9 +176,7 @@ fn run_listener(app: AppHandle, config: Arc<RwLock<SocialNotifySettings>>) {
             let pids = collect_wechat_pids(WECHAT_EXES);
 
             let mut wins: Vec<WechatWindow> = Vec::new();
-            let _ = unsafe {
-                EnumWindows(Some(enum_proc), LPARAM(&mut wins as *mut _ as isize))
-            };
+            let _ = unsafe { EnumWindows(Some(enum_proc), LPARAM(&mut wins as *mut _ as isize)) };
             // Enrich with child-window counts (a popup drawn as a child HWND
             // would change a window's count). Only for WeChat-owned windows.
             let owned: Vec<WechatWindow> = wins
@@ -206,9 +207,7 @@ fn run_listener(app: AppHandle, config: Arc<RwLock<SocialNotifySettings>>) {
             // when the feature turns on doesn't count as a new message.
             if primed && has_new_popup(&prev, &current_popups) {
                 let now = now_millis();
-                if cfg.cooldown_ms == 0
-                    || now.saturating_sub(last_emit_at) >= cfg.cooldown_ms
-                {
+                if cfg.cooldown_ms == 0 || now.saturating_sub(last_emit_at) >= cfg.cooldown_ms {
                     last_emit_at = now;
                     eprintln!("[social_notify] wechat new-message signal detected");
                     let _ = app.emit(

@@ -83,6 +83,14 @@ export interface WindowSettings {
   result_y: number;
   /** result overlay window width, LOGICAL px. 0 = never resized (tracks bar width). */
   result_w: number;
+  /** settings popup X, LOGICAL px. */
+  settings_x: number;
+  /** settings popup Y, LOGICAL px. */
+  settings_y: number;
+  /** settings popup width, LOGICAL px. */
+  settings_w: number;
+  /** settings popup height, LOGICAL px. */
+  settings_h: number;
 }
 
 export interface AiSettings {
@@ -332,6 +340,10 @@ export const DEFAULT_WINDOW: WindowSettings = {
   result_x: -1, // sentinel: -1 = "never placed by user" -> default above the bar
   result_y: -1,
   result_w: 0, // sentinel: 0 = "never resized" -> track the bar width
+  settings_x: 245,
+  settings_y: 25,
+  settings_w: 1063,
+  settings_h: 657,
 };
 
 export const DEFAULT_AI: AiSettings = {
@@ -435,8 +447,8 @@ export const DEFAULT_SOCIAL_NOTIFY: SocialNotifySettings = {
 export const DEFAULT_HOTKEY: HotkeySettings = {
   summon: "alt+space", // 召唤键；已显示时再按一次即隐藏（切换）
   note: "alt+n", // 便签键；有便签显示则收起，否则呼出，一条都没有则新建空白便签
-  note_create: "", // 直接新建便签键；留空=未启用，由用户在设置里自定义
-  note_destroy: "", // 销毁当前便签键；留空=未启用，由用户在设置里自定义
+  note_create: "alt+shift+c", // 直接新建便签键；留空=未启用，由用户在设置里自定义
+  note_destroy: "alt+z", // 销毁当前便签键；留空=未启用，由用户在设置里自定义
 };
 
 export const DEFAULT_SETTINGS: AppSettings = {

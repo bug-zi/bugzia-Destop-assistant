@@ -4,15 +4,24 @@ import type {
   ConflictInfo,
   HotkeyEntry,
   HotkeyScope,
+  HotkeySourceType,
   ManualHotkeyInput,
+  ObservedHotkeyEntry,
+  RunningAppInfo,
   ShortcutHotkeyItem,
 } from "../features/hotkeys/hotkeyTypes";
 import {
   addManualHotkeyEntry,
   detectHotkeyConflicts,
   hideHotkeyCenterEntry,
+  getHotkeyObserverStatus,
   listHiddenHotkeyCenterEntries,
+  listObservedHotkeys,
+  listRunningApps,
+  promoteObservedHotkey,
   removeManualHotkeyEntry,
+  removeObservedHotkey,
+  setHotkeyObserverEnabled,
   unhideHotkeyCenterEntry,
   updateManualHotkeyEntry,
 } from "../features/hotkeys/hotkeyCenter";
@@ -123,8 +132,9 @@ export default function HotkeyCenterPanel({ hotkey, onPatchHotkey, hkErr, setHkE
   const stats = useMemo(() => {
     const total = entries.length;
     const conflicts = entries.filter((e) => e.conflict.is_duplicate).length;
+    const overrides = entries.filter((e) => e.conflict.is_system_override).length;
     const modifiable = entries.filter((e) => e.can_modify).length;
-    return { total, conflicts, modifiable };
+    return { total, conflicts, overrides, modifiable };
   }, [entries]);
 
   return (
@@ -164,6 +174,7 @@ export default function HotkeyCenterPanel({ hotkey, onPatchHotkey, hkErr, setHkE
           hkErr={hkErr}
           setHkErr={setHkErr}
           byId={byId}
+          entries={entries}
         />
       )}
 
@@ -179,6 +190,7 @@ export default function HotkeyCenterPanel({ hotkey, onPatchHotkey, hkErr, setHkE
       {tab === "manual" && (
         <ManualTab
           entries={entries.filter((e) => e.source_type === "Manual")}
+          allEntries={entries}
           busy={busy}
           setBusy={setBusy}
           onChange={refreshEntries}
@@ -199,6 +211,7 @@ export default function HotkeyCenterPanel({ hotkey, onPatchHotkey, hkErr, setHkE
           items={shortcuts}
           hiddenItems={hiddenShortcuts}
           byId={byId}
+          entries={entries}
           busy={busy}
           setBusy={setBusy}
           onChange={refreshShortcuts}
@@ -218,7 +231,7 @@ function OverviewTab({
   onJump,
 }: {
   entries: HotkeyEntry[];
-  stats: { total: number; conflicts: number; modifiable: number };
+  stats: { total: number; conflicts: number; overrides: number; modifiable: number };
   onJump: (t: Tab) => void;
 }) {
   return (
@@ -226,6 +239,7 @@ function OverviewTab({
       <div className="hk-stats">
         <Stat label="总数" value={stats.total} />
         <Stat label="冲突" value={stats.conflicts} tone={stats.conflicts > 0 ? "warn" : "ok"} />
+        <Stat label="覆盖" value={stats.overrides} tone={stats.overrides > 0 ? "note" : "ok"} />
         <Stat label="可修改" value={stats.modifiable} />
       </div>
       <div className="hk-table">
@@ -237,7 +251,7 @@ function OverviewTab({
         </div>
         {entries.length === 0 && <div className="hk-empty">暂无数据，或扫描失败。</div>}
         {entries.map((e) => (
-          <div className={"hk-row" + (e.conflict.is_duplicate ? " dup" : "")} key={e.id}>
+          <div className={"hk-row" + entryStateClass(e)} key={e.id}>
             <span className="hk-kbd">{e.display || "未设置"}</span>
             <span className="hk-name" title={e.title}>{e.title}</span>
             <span className="hk-src">{e.app_name}</span>
@@ -248,7 +262,7 @@ function OverviewTab({
         ))}
       </div>
       <div className="hint">
-        Bugzia 自身键与桌面 / 开始菜单的快捷方式热键都会列出。冲突可在对应标签里修改。
+        真冲突表示运行时可能互相抢占；覆盖表示自定义快捷键接管了 Windows 原有低风险系统键。
       </div>
       <div className="hk-jump">
         <button className="key-btn" type="button" onClick={() => onJump("conflicts")}>
@@ -292,6 +306,15 @@ function ConflictTab({
     }
     return [...groups.values()].sort((a, b) => a[0].display.localeCompare(b[0].display));
   }, [entries]);
+  const systemOverrideGroups = useMemo(() => {
+    const groups = new Map<string, HotkeyEntry[]>();
+    for (const e of entries) {
+      if (!e.conflict.is_system_override || !e.display) continue;
+      const key = e.display.toLowerCase();
+      groups.set(key, [...(groups.get(key) ?? []), e]);
+    }
+    return [...groups.values()].sort((a, b) => a[0].display.localeCompare(b[0].display));
+  }, [entries]);
   const highRisk = useMemo(
     () =>
       entries
@@ -319,14 +342,18 @@ function ConflictTab({
     <div className="hk-conflict">
       <div className="hk-stats">
         <Stat label="冲突组" value={duplicateGroups.length} tone={duplicateGroups.length > 0 ? "warn" : "ok"} />
-        <Stat label="冲突条目" value={entries.filter((e) => e.conflict.is_duplicate).length} />
+        <Stat
+          label="覆盖系统"
+          value={systemOverrideGroups.length}
+          tone={systemOverrideGroups.length > 0 ? "note" : "ok"}
+        />
         <Stat label="高风险" value={highRisk.length} tone={highRisk.length > 0 ? "warn" : "ok"} />
       </div>
       {msg && <div className={"key-msg " + (msg.ok ? "ok" : "err")}>{msg.text}</div>}
 
       <div className="hk-list">
-        {duplicateGroups.length === 0 && highRisk.length === 0 && (
-          <div className="hk-empty">目前没有重复冲突或高风险系统键。</div>
+        {duplicateGroups.length === 0 && systemOverrideGroups.length === 0 && highRisk.length === 0 && (
+          <div className="hk-empty">目前没有真正冲突、系统键覆盖或高风险系统键。</div>
         )}
 
         {duplicateGroups.map((group) => {
@@ -337,6 +364,29 @@ function ConflictTab({
                 <span className="hk-kbd">{group[0].display}</span>
                 <span className={"hk-badge " + (withBugzia ? "bugzia" : "dup")}>
                   {withBugzia ? "与 Bugzia 冲突" : "重复占用"}
+                </span>
+              </div>
+              {group.map((e) => (
+                <ConflictEntryRow
+                  key={e.id}
+                  entry={e}
+                  busy={busy}
+                  onJump={onJump}
+                  onHide={() => void hideEntry(e)}
+                />
+              ))}
+            </div>
+          );
+        })}
+
+        {systemOverrideGroups.map((group) => {
+          const withBugzia = group.some((e) => e.source_type === "Bugzia");
+          return (
+            <div className="hk-conflict-group" key={`override.${group[0].display}`}>
+              <div className="hk-conflict-head">
+                <span className="hk-kbd">{group[0].display}</span>
+                <span className="hk-badge override">
+                  {withBugzia ? "Bugzia 已接管" : "覆盖系统键"}
                 </span>
               </div>
               {group.map((e) => (
@@ -371,7 +421,7 @@ function ConflictTab({
         )}
       </div>
       <div className="hint">
-        冲突页会聚合相同组合键和高风险系统键。Windows 系统键只能作为参考；应用登记和 Bugzia 快捷键可到对应标签处理。
+        真冲突会互相抢占；系统键覆盖表示自定义快捷键已接管 Windows 原行为，例如 Alt+Space 被 Bugzia 用来召唤输入框。
       </div>
     </div>
   );
@@ -432,7 +482,19 @@ function canCenterHide(entry: HotkeyEntry): boolean {
   return entry.source_type === "WindowsSystem" || entry.source_type === "Manual";
 }
 
-function Stat({ label, value, tone }: { label: string; value: number; tone?: "ok" | "warn" }) {
+function entryStateClass(entry: HotkeyEntry): string {
+  if (entry.conflict.is_duplicate) return " dup";
+  if (entry.conflict.is_system_override) return " override";
+  return "";
+}
+
+function itemStateClass(entry: HotkeyEntry): string {
+  if (entry.conflict.is_duplicate || entry.manage_level === "HighRisk") return " warn";
+  if (entry.conflict.is_system_override) return " notice";
+  return "";
+}
+
+function Stat({ label, value, tone }: { label: string; value: number; tone?: "ok" | "warn" | "note" }) {
   return (
     <div className={"hk-stat" + (tone ? ` ${tone}` : "")}>
       <span className="hk-stat-num">{value}</span>
@@ -442,9 +504,232 @@ function Stat({ label, value, tone }: { label: string; value: number; tone?: "ok
 }
 
 function HotkeyStatusDot({ c, active }: { c?: ConflictInfo; active: boolean }) {
-  const state = c?.is_duplicate ? "conflict" : active ? "ok" : "idle";
-  const label = state === "conflict" ? "有冲突" : active ? "已启用且无冲突" : "未启用且无冲突";
+  const state = c?.is_duplicate ? "conflict" : c?.is_system_override ? "override" : active ? "ok" : "idle";
+  const label =
+    state === "conflict"
+      ? "有真正冲突"
+      : state === "override"
+        ? c?.conflicts_with_bugzia
+          ? "Bugzia 已接管 Windows 系统键"
+          : "覆盖 Windows 系统键"
+        : active
+          ? "已启用且无真正冲突"
+          : "未启用且无真正冲突";
   return <span className={`hk-status-dot ${state}`} title={label} aria-label={label} />;
+}
+
+function keyNameForCapture(key: string): string | null {
+  if (key.length === 1) {
+    if (/^[a-z0-9]$/i.test(key)) return key.toUpperCase();
+    switch (key) {
+      case ".":
+      case ",":
+      case ";":
+      case "/":
+      case "\\":
+      case "`":
+      case "=":
+        return key;
+      case "+":
+        return "Plus";
+      case "-":
+        return "Minus";
+      case "*":
+        return "*";
+      default:
+        return null;
+    }
+  }
+  switch (key) {
+    case " ":
+    case "Space":
+    case "Spacebar":
+      return "Space";
+    case "ArrowLeft":
+      return "Left";
+    case "ArrowRight":
+      return "Right";
+    case "ArrowUp":
+      return "Up";
+    case "ArrowDown":
+      return "Down";
+    case "PageUp":
+    case "PageDown":
+    case "Home":
+    case "End":
+    case "Insert":
+    case "PrintScreen":
+    case "Pause":
+    case "NumLock":
+    case "ScrollLock":
+    case "CapsLock":
+      return key;
+    case "Escape":
+      return null;
+    case "Control":
+    case "Alt":
+    case "Shift":
+    case "Meta":
+      return null;
+    default:
+      return key;
+  }
+}
+
+function acceleratorFromEvent(e: React.KeyboardEvent<HTMLInputElement>): string | null {
+  const key = keyNameForCapture(e.key);
+  if (!key) return null;
+  const parts: string[] = [];
+  if (e.metaKey) parts.push("Win");
+  if (e.ctrlKey) parts.push("Ctrl");
+  if (e.altKey) parts.push("Alt");
+  if (e.shiftKey) parts.push("Shift");
+  parts.push(key);
+  return parts.join("+");
+}
+
+function HotkeyCaptureInput({
+  value,
+  placeholder,
+  onChange,
+  onCommit,
+  onCancel,
+  autoFocus,
+  className = "f-input",
+}: {
+  value: string;
+  placeholder: string;
+  onChange: (value: string) => void;
+  onCommit?: () => void;
+  onCancel?: () => void;
+  autoFocus?: boolean;
+  className?: string;
+}) {
+  return (
+    <input
+      className={className}
+      value={value}
+      placeholder={placeholder}
+      autoFocus={autoFocus}
+      onChange={(e) => onChange(e.target.value)}
+      onKeyDown={(e) => {
+        if (
+          e.key === "Enter" &&
+          onCommit &&
+          !e.ctrlKey &&
+          !e.altKey &&
+          !e.shiftKey &&
+          !e.metaKey
+        ) {
+          e.preventDefault();
+          onCommit();
+          return;
+        }
+        if (e.key === "Escape") {
+          if (onCancel) {
+            e.preventDefault();
+            onCancel();
+            return;
+          }
+          e.currentTarget.blur();
+          return;
+        }
+        if (e.key === "Backspace" || e.key === "Delete") {
+          e.preventDefault();
+          onChange("");
+          return;
+        }
+        const next = acceleratorFromEvent(e);
+        if (!next) return;
+        e.preventDefault();
+        onChange(next);
+      }}
+    />
+  );
+}
+
+function findDisplayConflicts(
+  entries: HotkeyEntry[],
+  value: string,
+  scope: HotkeyScope,
+  appName: string,
+  processName: string,
+  excludeIds: string[] = [],
+): HotkeyEntry[] {
+  const normalized = value.trim().toLowerCase();
+  if (!normalized) return [];
+  const exclude = new Set(excludeIds);
+  return entries.filter((e) => {
+    if (exclude.has(e.id)) return false;
+    return (
+      e.display.trim().toLowerCase() === normalized &&
+      scopesMayOverlap(scope, appName, processName, e.scope, e.app_name, e.process_name ?? "")
+    );
+  });
+}
+
+function scopesMayOverlap(
+  leftScope: HotkeyScope,
+  leftApp: string,
+  leftProcess: string,
+  rightScope: HotkeyScope,
+  rightApp: string,
+  rightProcess: string,
+): boolean {
+  if (
+    leftScope === "Global" ||
+    leftScope === "Unknown" ||
+    rightScope === "Global" ||
+    rightScope === "Unknown"
+  ) {
+    return true;
+  }
+  const leftIdentity = (leftProcess.trim() || leftApp.trim()).toLowerCase();
+  const rightIdentity = (rightProcess.trim() || rightApp.trim()).toLowerCase();
+  return leftIdentity === rightIdentity;
+}
+
+function isLowRiskWindowsSystemEntry(entry: HotkeyEntry): boolean {
+  return entry.source_type === "WindowsSystem" && entry.manage_level !== "HighRisk";
+}
+
+function HotkeyConflictHint({
+  entries,
+  value,
+  sourceType,
+  scope,
+  appName,
+  processName = "",
+  excludeIds,
+}: {
+  entries: HotkeyEntry[];
+  value: string;
+  sourceType: HotkeySourceType;
+  scope: HotkeyScope;
+  appName: string;
+  processName?: string;
+  excludeIds?: string[];
+}) {
+  const candidates = findDisplayConflicts(entries, value, scope, appName, processName, excludeIds);
+  const overrides = candidates.filter(
+    (e) => sourceType !== "WindowsSystem" && isLowRiskWindowsSystemEntry(e),
+  );
+  const conflicts = candidates.filter((e) => !overrides.includes(e));
+  if (conflicts.length === 0 && overrides.length === 0) return null;
+  const text = conflicts
+    .slice(0, 3)
+    .map((e) => `${e.app_name} / ${e.title}`)
+    .join("；");
+  const more = conflicts.length > 3 ? ` 等 ${conflicts.length} 项` : "";
+  if (conflicts.length > 0) {
+    return <div className="key-msg err">已登记冲突：{text}{more}</div>;
+  }
+  const overrideText = overrides
+    .slice(0, 3)
+    .map((e) => e.title)
+    .join("；");
+  const overrideMore = overrides.length > 3 ? ` 等 ${overrides.length} 项` : "";
+  return <div className="key-msg warn">将覆盖 Windows 系统键：{overrideText}{overrideMore}</div>;
 }
 
 // ---------------------------------------------------------------------------
@@ -457,12 +742,14 @@ function BugziaTab({
   hkErr,
   setHkErr,
   byId,
+  entries,
 }: {
   hotkey: HotkeySettings;
   onPatchHotkey: (p: Partial<HotkeySettings>) => void;
   hkErr: string | null;
   setHkErr: (s: string | null) => void;
   byId: Map<string, HotkeyEntry>;
+  entries: HotkeyEntry[];
 }) {
   return (
     <div className="hk-bugzia">
@@ -476,47 +763,75 @@ function BugziaTab({
         <ReadonlyKey label="销毁当前便笺" entry={byId.get("bugzia.note_destroy")} />
       </div>
       <Field label="召唤输入框">
-        <input
-          className="f-input"
+        <HotkeyCaptureInput
           value={hotkey.summon}
           placeholder="alt+space"
-          onChange={(e) => {
+          onChange={(value) => {
             setHkErr(null);
-            onPatchHotkey({ summon: e.target.value });
+            onPatchHotkey({ summon: value });
           }}
+        />
+        <HotkeyConflictHint
+          entries={entries}
+          value={hotkey.summon}
+          sourceType="Bugzia"
+          scope="Global"
+          appName="Bugzia"
+          excludeIds={["bugzia.summon"]}
         />
       </Field>
       <Field label="召唤便笺">
-        <input
-          className="f-input"
+        <HotkeyCaptureInput
           value={hotkey.note}
           placeholder="alt+n"
-          onChange={(e) => {
+          onChange={(value) => {
             setHkErr(null);
-            onPatchHotkey({ note: e.target.value });
+            onPatchHotkey({ note: value });
           }}
+        />
+        <HotkeyConflictHint
+          entries={entries}
+          value={hotkey.note}
+          sourceType="Bugzia"
+          scope="Global"
+          appName="Bugzia"
+          excludeIds={["bugzia.note"]}
         />
       </Field>
       <Field label="直接新建便笺">
-        <input
-          className="f-input"
+        <HotkeyCaptureInput
           value={hotkey.note_create}
           placeholder="alt+shift+n"
-          onChange={(e) => {
+          onChange={(value) => {
             setHkErr(null);
-            onPatchHotkey({ note_create: e.target.value });
+            onPatchHotkey({ note_create: value });
           }}
+        />
+        <HotkeyConflictHint
+          entries={entries}
+          value={hotkey.note_create}
+          sourceType="Bugzia"
+          scope="Global"
+          appName="Bugzia"
+          excludeIds={["bugzia.note_create"]}
         />
       </Field>
       <Field label="销毁当前便笺">
-        <input
-          className="f-input"
+        <HotkeyCaptureInput
           value={hotkey.note_destroy}
           placeholder="alt+w"
-          onChange={(e) => {
+          onChange={(value) => {
             setHkErr(null);
-            onPatchHotkey({ note_destroy: e.target.value });
+            onPatchHotkey({ note_destroy: value });
           }}
+        />
+        <HotkeyConflictHint
+          entries={entries}
+          value={hotkey.note_destroy}
+          sourceType="Bugzia"
+          scope="Global"
+          appName="Bugzia"
+          excludeIds={["bugzia.note_destroy"]}
         />
       </Field>
       {hkErr && <div className="key-msg err">{hkErr}</div>}
@@ -592,11 +907,16 @@ function WindowsTab({
       <div className="hk-list">
         {filtered.length === 0 && <div className="hk-empty">暂无匹配的 Windows 快捷键。</div>}
         {filtered.map((e) => (
-          <div className={"hk-item" + (e.manage_level === "HighRisk" ? " warn" : "")} key={e.id}>
+          <div className={"hk-item" + itemStateClass(e)} key={e.id}>
             <div className="hk-item-main">
               <div className="hk-item-name" title={e.title}>
                 {e.title}
                 {e.manage_level === "HighRisk" && <span className="hk-status">（高风险）</span>}
+                {e.conflict.is_system_override && (
+                  <span className="hk-status">
+                    {e.conflict.conflicts_with_bugzia ? "（被 Bugzia 覆盖）" : "（被自定义键覆盖）"}
+                  </span>
+                )}
               </div>
               <div className="hk-item-target">{e.app_name}</div>
             </div>
@@ -624,19 +944,51 @@ function WindowsTab({
 
 const EMPTY_MANUAL_INPUT: ManualHotkeyInput = {
   app_name: "",
+  process_name: "",
+  window_title_match: "",
   title: "",
   accelerator: "",
   scope: "Global",
   notes: "",
 };
 
+function runningAppKey(app: RunningAppInfo): string {
+  return `${app.pid}:${app.process_name}:${app.window_title}`;
+}
+
+function appNameFromProcess(processName: string): string {
+  return processName.replace(/\.exe$/i, "") || processName;
+}
+
+function isManualEntryRunning(
+  entry: HotkeyEntry,
+  runningApps: RunningAppInfo[],
+  runningProcessNames: Set<string>,
+): boolean {
+  const processName = entry.process_name?.trim().toLowerCase();
+  if (processName) return runningProcessNames.has(processName);
+  const appName = entry.app_name.trim().toLowerCase();
+  if (!appName) return false;
+  return runningApps.some((app) => {
+    const processStem = appNameFromProcess(app.process_name).trim().toLowerCase();
+    return processStem === appName || app.window_title.trim().toLowerCase().includes(appName);
+  });
+}
+
+function formatSeenTime(ms: number): string {
+  if (!ms) return "";
+  return new Date(ms).toLocaleString();
+}
+
 function ManualTab({
   entries,
+  allEntries,
   busy,
   setBusy,
   onChange,
 }: {
   entries: HotkeyEntry[];
+  allEntries: HotkeyEntry[];
   busy: boolean;
   setBusy: (b: boolean) => void;
   onChange: () => Promise<void>;
@@ -644,16 +996,118 @@ function ManualTab({
   const [draft, setDraft] = useState<ManualHotkeyInput>(EMPTY_MANUAL_INPUT);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const [runningApps, setRunningApps] = useState<RunningAppInfo[]>([]);
+  const [onlyRunning, setOnlyRunning] = useState(false);
+  const [observedHotkeys, setObservedHotkeys] = useState<ObservedHotkeyEntry[]>([]);
+  const [observerEnabled, setObserverEnabled] = useState(false);
+
+  useEffect(() => {
+    let alive = true;
+    async function refresh() {
+      const [apps, observed, status] = await Promise.all([
+        listRunningApps(),
+        listObservedHotkeys(),
+        getHotkeyObserverStatus(),
+      ]);
+      if (alive) {
+        setRunningApps(apps);
+        setObservedHotkeys(observed);
+        setObserverEnabled(status.enabled);
+      }
+    }
+    void refresh();
+    const timer = window.setInterval(() => void refresh(), 10000);
+    return () => {
+      alive = false;
+      window.clearInterval(timer);
+    };
+  }, []);
+
+  const runningProcessNames = useMemo(
+    () => new Set(runningApps.map((app) => app.process_name.trim().toLowerCase()).filter(Boolean)),
+    [runningApps],
+  );
+
+  const visibleEntries = useMemo(
+    () => (onlyRunning ? entries.filter((entry) => isManualEntryRunning(entry, runningApps, runningProcessNames)) : entries),
+    [entries, onlyRunning, runningApps, runningProcessNames],
+  );
 
   function patchDraft(p: Partial<ManualHotkeyInput>) {
     setDraft((cur) => ({ ...cur, ...p }));
     setMsg(null);
   }
 
+  async function refreshRunningApps() {
+    const [apps, observed, status] = await Promise.all([
+      listRunningApps(),
+      listObservedHotkeys(),
+      getHotkeyObserverStatus(),
+    ]);
+    setRunningApps(apps);
+    setObservedHotkeys(observed);
+    setObserverEnabled(status.enabled);
+  }
+
+  async function toggleObserver() {
+    setBusy(true);
+    try {
+      const next = await setHotkeyObserverEnabled(!observerEnabled);
+      setObserverEnabled(next.enabled);
+      setObservedHotkeys(await listObservedHotkeys());
+      setMsg({
+        ok: true,
+        text: next.enabled ? "已开始观察记录应用快捷键。" : "已停止观察记录。",
+      });
+    } catch (e) {
+      setMsg({ ok: false, text: String(e) });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function promoteObserved(entry: ObservedHotkeyEntry) {
+    setBusy(true);
+    try {
+      await promoteObservedHotkey(entry.id);
+      setObservedHotkeys(await listObservedHotkeys());
+      await onChange();
+      setMsg({ ok: true, text: `已登记 ${entry.app_name} / ${entry.accelerator}` });
+    } catch (e) {
+      setMsg({ ok: false, text: String(e) });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function removeObserved(entry: ObservedHotkeyEntry) {
+    setBusy(true);
+    try {
+      await removeObservedHotkey(entry.id);
+      setObservedHotkeys(await listObservedHotkeys());
+    } catch (e) {
+      setMsg({ ok: false, text: String(e) });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function chooseRunningApp(key: string) {
+    const app = runningApps.find((item) => runningAppKey(item) === key);
+    if (!app) return;
+    patchDraft({
+      app_name: appNameFromProcess(app.process_name),
+      process_name: app.process_name,
+      window_title_match: app.window_title,
+    });
+  }
+
   function editEntry(e: HotkeyEntry) {
     setEditingId(e.id);
     setDraft({
       app_name: e.app_name,
+      process_name: e.process_name ?? "",
+      window_title_match: e.window_title_match ?? "",
       title: e.title,
       accelerator: e.display,
       scope: e.scope,
@@ -716,12 +1170,96 @@ function ManualTab({
   return (
     <div className="hk-shortcut">
       <div className="hk-manual-form">
+        <div className="hk-filters">
+          <button className="key-btn" type="button" disabled={busy} onClick={() => void toggleObserver()}>
+            {observerEnabled ? "停止观察" : "开始观察"}
+          </button>
+          <button className="key-btn ghost" type="button" disabled={busy} onClick={() => void refreshRunningApps()}>
+            刷新记录
+          </button>
+          <span className="hk-src">
+            {observerEnabled ? "观察中：切到目标应用后直接使用快捷键" : "未开启观察记录"}
+          </span>
+        </div>
+        <div className="hk-list">
+          {observedHotkeys.length === 0 && (
+            <div className="hk-empty">还没有观察到应用快捷键。</div>
+          )}
+          {observedHotkeys.slice(0, 12).map((entry) => (
+            <div className="hk-item notice" key={entry.id}>
+              <div className="hk-item-main">
+                <div className="hk-item-name" title={entry.window_title}>
+                  {entry.app_name}
+                  <span className="hk-status">（{entry.count} 次）</span>
+                </div>
+                <div className="hk-item-target">
+                  {entry.process_name} / {entry.window_title}
+                  {entry.last_seen_ms ? ` / 最近 ${formatSeenTime(entry.last_seen_ms)}` : ""}
+                </div>
+              </div>
+              <div className="hk-item-actions">
+                <span className="hk-kbd">{entry.accelerator}</span>
+                <button
+                  className="key-btn"
+                  type="button"
+                  disabled={busy}
+                  onClick={() => void promoteObserved(entry)}
+                >
+                  登记
+                </button>
+                <button
+                  className="key-btn ghost"
+                  type="button"
+                  disabled={busy}
+                  onClick={() => void removeObserved(entry)}
+                >
+                  忽略
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+      <div className="hk-filters">
+        <select className="f-input hk-search" defaultValue="" onChange={(e) => chooseRunningApp(e.target.value)}>
+          <option value="">选择运行中的应用来填充进程名</option>
+          {runningApps.map((app) => (
+            <option value={runningAppKey(app)} key={runningAppKey(app)}>
+              {appNameFromProcess(app.process_name)} / {app.window_title}
+            </option>
+          ))}
+        </select>
+        <label className="check-row hk-toggle">
+          <input type="checkbox" checked={onlyRunning} onChange={(e) => setOnlyRunning(e.target.checked)} />
+          只看运行中
+        </label>
+        <button className="key-btn ghost" type="button" disabled={busy} onClick={() => void refreshRunningApps()}>
+          刷新运行中
+        </button>
+      </div>
+      <div className="hk-manual-form">
         <Field label="应用">
           <input
             className="f-input"
             value={draft.app_name}
             placeholder="例如 酷狗音乐"
             onChange={(e) => patchDraft({ app_name: e.target.value })}
+          />
+        </Field>
+        <Field label="进程名">
+          <input
+            className="f-input"
+            value={draft.process_name}
+            placeholder="例如 KuGou.exe、Pogget.exe"
+            onChange={(e) => patchDraft({ process_name: e.target.value })}
+          />
+        </Field>
+        <Field label="窗口标题">
+          <input
+            className="f-input"
+            value={draft.window_title_match}
+            placeholder="可选：用于识别运行中的窗口"
+            onChange={(e) => patchDraft({ window_title_match: e.target.value })}
           />
         </Field>
         <Field label="功能">
@@ -733,11 +1271,19 @@ function ManualTab({
           />
         </Field>
         <Field label="快捷键">
-          <input
-            className="f-input"
+          <HotkeyCaptureInput
             value={draft.accelerator}
             placeholder="例如 Alt+K、Win+Shift+S"
-            onChange={(e) => patchDraft({ accelerator: e.target.value })}
+            onChange={(value) => patchDraft({ accelerator: value })}
+          />
+          <HotkeyConflictHint
+            entries={allEntries}
+            value={draft.accelerator}
+            sourceType="Manual"
+            scope={draft.scope}
+            appName={draft.app_name}
+            processName={draft.process_name}
+            excludeIds={editingId ? [editingId] : []}
           />
         </Field>
         <Field label="作用域">
@@ -774,13 +1320,22 @@ function ManualTab({
       </div>
 
       <div className="hk-list">
-        {entries.length === 0 && <div className="hk-empty">还没有手动登记的应用快捷键。</div>}
-        {entries.map((e) => (
-          <div className={"hk-item" + (e.conflict.is_duplicate ? " warn" : "")} key={e.id}>
+        {visibleEntries.length === 0 && (
+          <div className="hk-empty">
+            {onlyRunning ? "当前运行中的应用还没有登记快捷键。" : "还没有手动登记的应用快捷键。"}
+          </div>
+        )}
+        {visibleEntries.map((e) => (
+          <div className={"hk-item" + itemStateClass(e)} key={e.id}>
             <div className="hk-item-main">
-              <div className="hk-item-name" title={e.title}>{e.title}</div>
+              <div className="hk-item-name" title={e.title}>
+                {e.title}
+                {isManualEntryRunning(e, runningApps, runningProcessNames) && <span className="hk-status">（运行中）</span>}
+              </div>
               <div className="hk-item-target">
                 {e.app_name} / {scopeText(e.scope)}
+                {e.process_name ? ` / ${e.process_name}` : ""}
+                {e.window_title_match ? ` / ${e.window_title_match}` : ""}
                 {e.target ? ` / ${e.target}` : ""}
               </div>
             </div>
@@ -801,7 +1356,7 @@ function ManualTab({
         ))}
       </div>
       <div className="hint">
-        手动登记适合暂时无法自动读取配置的应用快捷键；登记后会进入总览，并参与冲突检测。
+        观察记录会统计你在前台应用中实际按过的快捷组合；登记后进入总览，并参与冲突检测。
       </div>
     </div>
   );
@@ -857,7 +1412,7 @@ function HiddenTab({
       <div className="hk-list">
         {filtered.length === 0 && <div className="hk-empty">暂无已隐藏的 Windows 或应用快捷键。</div>}
         {filtered.map((e) => (
-          <div className={"hk-item" + (e.conflict.is_duplicate ? " warn" : "")} key={e.id}>
+          <div className={"hk-item" + itemStateClass(e)} key={e.id}>
             <div className="hk-item-main">
               <div className="hk-item-name" title={e.title}>{e.title}</div>
               <div className="hk-item-target">
@@ -930,6 +1485,7 @@ function ShortcutTab({
   items,
   hiddenItems,
   byId,
+  entries,
   busy,
   setBusy,
   onChange,
@@ -937,6 +1493,7 @@ function ShortcutTab({
   items: ShortcutHotkeyItem[];
   hiddenItems: ShortcutHotkeyItem[];
   byId: Map<string, HotkeyEntry>;
+  entries: HotkeyEntry[];
   busy: boolean;
   setBusy: (b: boolean) => void;
   onChange: () => Promise<void>;
@@ -1098,21 +1655,26 @@ function ShortcutTab({
               <div className="hk-item-actions">
                 {editing ? (
                   <>
-                    <input
+                    <HotkeyCaptureInput
                       className="f-input hk-edit"
                       value={editVal}
                       placeholder="如 Ctrl+Alt+F9"
                       autoFocus
-                      onChange={(e) => setEditVal(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter") {
-                          e.preventDefault();
-                          void applyEdit(it);
-                        } else if (e.key === "Escape") {
-                          setEditPath(null);
-                          setEditVal("");
-                        }
+                      onChange={setEditVal}
+                      onCommit={() => void applyEdit(it)}
+                      onCancel={() => {
+                        setEditPath(null);
+                        setEditVal("");
                       }}
+                    />
+                    <HotkeyConflictHint
+                      entries={entries}
+                      value={editVal}
+                      sourceType="ShortcutLink"
+                      scope="Global"
+                      appName={entry?.app_name ?? it.name}
+                      processName={entry?.process_name ?? ""}
+                      excludeIds={[it.shortcut_path]}
                     />
                     <button
                       className="key-btn"

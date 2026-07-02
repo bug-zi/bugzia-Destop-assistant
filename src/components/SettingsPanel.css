@@ -14,6 +14,7 @@
 }
 
 .settings-panel {
+  position: relative;
   flex: 1 1 auto;
   display: flex;
   flex-direction: column;
@@ -31,19 +32,13 @@
   justify-content: space-between;
   padding: 10px 14px;
   border-bottom: 1px solid rgba(31, 36, 40, 0.1);
+  user-select: none;
+  -webkit-user-select: none;
 }
 
-/* Dedicated drag grip for the settings window (sibling of head, never an
-   ancestor of the close button, so the button's mousedown is never swallowed
-   by window drag). */
 .settings-drag {
   flex: 0 0 auto;
   height: 22px;
-  cursor: grab;
-}
-
-.settings-drag:active {
-  cursor: grabbing;
 }
 
 .settings-title {
@@ -240,6 +235,10 @@ textarea.f-input {
 
 .key-msg.err {
   color: #b42318;
+}
+
+.key-msg.warn {
+  color: #b54708;
 }
 
 .hint {
@@ -447,6 +446,10 @@ textarea.f-input {
   color: #1f7a3d;
 }
 
+.hk-stat.note .hk-stat-num {
+  color: #b54708;
+}
+
 .hk-table {
   border: 1px solid rgba(31, 36, 40, 0.12);
   border-radius: 8px;
@@ -477,6 +480,10 @@ textarea.f-input {
 
 .hk-row.dup {
   background: rgba(180, 35, 24, 0.05);
+}
+
+.hk-row.override {
+  background: rgba(247, 144, 9, 0.06);
 }
 
 .hk-name {
@@ -530,6 +537,11 @@ textarea.f-input {
 .hk-status-dot.conflict {
   background: #d92d20;
   border-color: rgba(217, 45, 32, 0.55);
+}
+
+.hk-status-dot.override {
+  background: #f79009;
+  border-color: rgba(247, 144, 9, 0.55);
 }
 
 .hk-status-dot.idle {
@@ -610,10 +622,24 @@ textarea.f-input {
 
 .hk-conflict-row {
   display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 10px;
   padding: 8px 10px;
   border-top: 1px solid rgba(31, 36, 40, 0.08);
+}
+
+.hk-conflict-row .hk-item-main {
+  flex: 1 1 220px;
+  min-width: 0;
+  margin-bottom: 0;
+}
+
+.hk-conflict-row .hk-item-actions {
+  flex: 0 1 220px;
+  min-width: 0;
+  justify-content: flex-end;
 }
 
 .hk-badge {
@@ -637,6 +663,11 @@ textarea.f-input {
   color: #912018;
 }
 
+.hk-badge.override {
+  background: rgba(247, 144, 9, 0.14);
+  color: #93370d;
+}
+
 .hk-manual-form {
   border: 1px solid rgba(31, 36, 40, 0.12);
   background: rgba(255, 255, 255, 0.45);
@@ -654,6 +685,10 @@ textarea.f-input {
 
 .hk-item.warn {
   background: rgba(180, 35, 24, 0.04);
+}
+
+.hk-item.notice {
+  background: rgba(247, 144, 9, 0.05);
 }
 
 .hk-item-main {

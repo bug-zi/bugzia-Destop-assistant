@@ -20,19 +20,21 @@ use conversations::{
     reorder_conversations, set_conversation_locked, upsert_conversation,
 };
 use file_search::{open_file, reveal_file, search_files};
+use hotkey_center::{
+    hotkey_center_detect_conflicts, hotkey_center_hidden_list, hotkey_center_hide_entry,
+    hotkey_center_scan, hotkey_center_unhide_entry, hotkey_observer_set_enabled,
+    hotkey_observer_status, manual_hotkey_entries_list, manual_hotkey_entry_add,
+    manual_hotkey_entry_remove, manual_hotkey_entry_update, observed_hotkey_promote,
+    observed_hotkey_remove, observed_hotkeys_list, running_apps_list,
+};
 use notes::{notes_load, notes_save};
 use recyclebin::pet_eat_files;
 use settings::{
     clear_api_key, load_api_key, load_settings, save_api_key, save_settings, AgentNotifySettings,
 };
-use hotkey_center::{
-    hotkey_center_detect_conflicts, hotkey_center_hidden_list, hotkey_center_hide_entry,
-    hotkey_center_scan, hotkey_center_unhide_entry, manual_hotkey_entries_list,
-    manual_hotkey_entry_add, manual_hotkey_entry_remove, manual_hotkey_entry_update,
-};
 use shortcut_hotkeys::{
     shortcut_hotkey_clear, shortcut_hotkey_hidden_list, shortcut_hotkey_hide,
-    shortcut_hotkey_reveal, shortcut_hotkey_restore, shortcut_hotkey_set, shortcut_hotkey_unhide,
+    shortcut_hotkey_restore, shortcut_hotkey_reveal, shortcut_hotkey_set, shortcut_hotkey_unhide,
     shortcut_hotkeys_scan,
 };
 
@@ -857,6 +859,12 @@ pub fn run() {
             manual_hotkey_entry_add,
             manual_hotkey_entry_update,
             manual_hotkey_entry_remove,
+            running_apps_list,
+            hotkey_observer_set_enabled,
+            hotkey_observer_status,
+            observed_hotkeys_list,
+            observed_hotkey_remove,
+            observed_hotkey_promote,
             shortcut_hotkeys_scan,
             shortcut_hotkey_set,
             shortcut_hotkey_clear,

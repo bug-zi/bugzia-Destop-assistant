@@ -220,6 +220,22 @@ fn default_result_w() -> u32 {
     0
 }
 
+fn default_settings_window_w() -> u32 {
+    1063
+}
+
+fn default_settings_window_h() -> u32 {
+    657
+}
+
+fn default_settings_window_x() -> i32 {
+    245
+}
+
+fn default_settings_window_y() -> i32 {
+    25
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct WindowSettings {
     pub x: i32,
@@ -243,6 +259,18 @@ pub struct WindowSettings {
     /// the default placement tracks the bar width.
     #[serde(default = "default_result_w")]
     pub result_w: u32,
+    /// Settings popup X in LOGICAL px.
+    #[serde(default = "default_settings_window_x")]
+    pub settings_x: i32,
+    /// Settings popup Y in LOGICAL px.
+    #[serde(default = "default_settings_window_y")]
+    pub settings_y: i32,
+    /// Settings popup width in LOGICAL px.
+    #[serde(default = "default_settings_window_w")]
+    pub settings_w: u32,
+    /// Settings popup height in LOGICAL px.
+    #[serde(default = "default_settings_window_h")]
+    pub settings_h: u32,
 }
 
 impl Default for WindowSettings {
@@ -258,6 +286,10 @@ impl Default for WindowSettings {
             result_x: default_result_pos(),
             result_y: default_result_pos(),
             result_w: default_result_w(),
+            settings_x: default_settings_window_x(),
+            settings_y: default_settings_window_y(),
+            settings_w: default_settings_window_w(),
+            settings_h: default_settings_window_h(),
         }
     }
 }
@@ -366,15 +398,15 @@ pub struct HotkeySettings {
     #[serde(default = "default_hotkey_note")]
     pub note: String,
     /// Accelerator to ALWAYS spawn a fresh blank note, even when notes already
-    /// exist (unlike `note`, which toggles the whole set). Empty = disabled
-    /// (default): the user opts in by assigning a combo in Settings. Same
+    /// exist (unlike `note`, which toggles the whole set). The default is
+    /// `alt+shift+c`; users can clear it in Settings to disable it. Same
     /// `#[serde(default)]` rationale as `summon`.
-    #[serde(default)]
+    #[serde(default = "default_hotkey_note_create")]
     pub note_create: String,
     /// Accelerator to destroy the currently-focused note (the "current note").
-    /// Empty = disabled (default): the user opts in by assigning a combo in
-    /// Settings. Same `#[serde(default)]` rationale as `summon`.
-    #[serde(default)]
+    /// The default is `alt+z`; users can clear it in Settings to disable it.
+    /// Same `#[serde(default)]` rationale as `summon`.
+    #[serde(default = "default_hotkey_note_destroy")]
     pub note_destroy: String,
 }
 
@@ -386,14 +418,21 @@ fn default_hotkey_note() -> String {
     "alt+n".to_string()
 }
 
+fn default_hotkey_note_create() -> String {
+    "alt+shift+c".to_string()
+}
+
+fn default_hotkey_note_destroy() -> String {
+    "alt+z".to_string()
+}
+
 impl Default for HotkeySettings {
     fn default() -> Self {
         Self {
             summon: default_hotkey_summon(),
             note: default_hotkey_note(),
-            // Opt-in bindings: empty until the user assigns a combo in Settings.
-            note_create: String::new(),
-            note_destroy: String::new(),
+            note_create: default_hotkey_note_create(),
+            note_destroy: default_hotkey_note_destroy(),
         }
     }
 }
@@ -957,17 +996,17 @@ mod tests {
     }
 
     /// A settings.json whose `hotkey` predates `note_create` / `note_destroy`
-    /// must still load — both default to "" (disabled, opt-in), while the user's
+    /// must still load — both default to working bindings, while the user's
     /// `summon` / `note` are preserved untouched.
     #[test]
-    fn legacy_settings_with_hotkey_summon_note_loads_create_destroy_empty() {
+    fn legacy_settings_with_hotkey_summon_note_loads_create_destroy_defaults() {
         let legacy = serde_json::json!({
             "hotkey": { "summon": "ctrl+k", "note": "alt+n" }
         });
         let parsed: AppSettings = serde_json::from_value(legacy).unwrap();
         assert_eq!(parsed.hotkey.summon, "ctrl+k"); // preserved
         assert_eq!(parsed.hotkey.note, "alt+n"); // preserved
-        assert_eq!(parsed.hotkey.note_create, ""); // new field defaulted empty
-        assert_eq!(parsed.hotkey.note_destroy, ""); // new field defaulted empty
+        assert_eq!(parsed.hotkey.note_create, "alt+shift+c"); // new field defaulted
+        assert_eq!(parsed.hotkey.note_destroy, "alt+z"); // new field defaulted
     }
 }
