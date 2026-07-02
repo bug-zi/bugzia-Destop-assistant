@@ -55,10 +55,19 @@ export const NOTE_GEOM = "note://geom";
 export const NOTE_PINNED = "note://pinned";
 /** note://destroyed — note -> main before self-close. Payload: {id}. */
 export const NOTE_DESTROYED = "note://destroyed";
+/** note://destroy-current — backend -> main when the `note_destroy` hotkey
+ *  fires. Payload: none. Main decides which note "current" means (last
+ *  created/edited, fallback most-recent) from its own authoritative note list,
+ *  then destroys it via the same path as NOTE_DESTROYED. OS window-focus is
+ *  unreliable for these borderless/transparent note windows, so the choice
+ *  lives in main where the data is. */
+export const NOTE_DESTROY_CURRENT = "note://destroy-current";
 /** note://settings — main -> broadcast style defaults. Payload: NoteSettings. */
 export const NOTE_SETTINGS = "note://settings";
-/** note://quick-create — backend -> main when the note hotkey fires and no note
- *  window exists. Payload: none. Main responds by spawning a blank note. */
+/** note://quick-create — backend -> main to spawn a fresh blank note. Fired by
+ *  `toggle_notes` when the `note` hotkey fires with NO note window open, AND by
+ *  the `note_create` shortcut which always spawns one (even with notes open).
+ *  Payload: none. Main responds by spawning a blank note. */
 export const NOTE_QUICK_CREATE = "note://quick-create";
 /** note://toggle — backend -> main when the note hotkey fires and at least one
  *  note window exists. Payload: none. Main decides hide-vs-summon (and on summon

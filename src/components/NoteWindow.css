@@ -99,9 +99,9 @@ body,
   resize: none;
   border: none;
   outline: none;
-  background: rgba(0, 0, 0, 0.18);
-  border-radius: 6px;
-  padding: 6px 8px;
+  background: transparent;
+  border-radius: 0;
+  padding: 0;
   font-family: inherit;
   line-height: 1.5;
   white-space: pre-wrap;

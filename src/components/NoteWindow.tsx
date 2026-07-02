@@ -18,8 +18,8 @@ import "./NoteWindow.css";
 /**
  * A single desktop sticky-note overlay. Hydrates from the main window on mount
  * (content + style defaults), reports edits / geometry / pin / destroy back up,
- * and never writes notes.json itself (main is the sole writer). Double-click the
- * body to edit; the header has 钉住 / 复制 / 销毁.
+ * and never writes notes.json itself (main is the sole writer). Click the body
+ * to edit; the header has 钉住 / 复制 / 销毁.
  */
 export default function NoteWindow() {
   const id = noteIdFromLabel(getCurrentWindow().label);
@@ -63,18 +63,12 @@ export default function NoteWindow() {
           const s = ev.payload.settings ?? DEFAULT_NOTE;
           setSettings(s);
           applyNoteVars(s);
-          // 空便笺（quick-create 路径）直接进入编辑并聚焦——双击编辑模型下，
-          // 一张空白便笺默认只渲染占位文字，自动进入编辑才符合"随时写"。
-          // /note 带内容与重启恢复的 pinned 便笺 content 非空，不会命中。
+          // 新建空便笺直接进入编辑态，但等窗口完成显示/定位后再真正聚焦。
+          // 过早 focus 会让 Windows 中文输入法拿不到稳定光标位置，候选窗
+          // 可能退回到屏幕左上角。
           if (content === "") {
             setEditing(true);
-            requestAnimationFrame(() => {
-              const ta = taRef.current;
-              if (ta) {
-                ta.focus();
-                ta.setSelectionRange(0, 0);
-              }
-            });
+            void focusTextareaWhenWindowReady("start");
           }
         }),
       );
@@ -100,17 +94,31 @@ export default function NoteWindow() {
     };
   }, []);
 
+  function focusTextarea(selection: "start" | "end") {
+    requestAnimationFrame(() => {
+      const ta = taRef.current;
+      if (!ta) return;
+      ta.focus();
+      const pos = selection === "start" ? 0 : ta.value.length;
+      ta.setSelectionRange(pos, pos);
+    });
+  }
+
+  async function focusTextareaWhenWindowReady(selection: "start" | "end") {
+    const win = getCurrentWindow();
+    for (let i = 0; i < 20; i++) {
+      const visible = await win.isVisible().catch(() => true);
+      if (visible) break;
+      await new Promise<void>((resolve) => window.setTimeout(resolve, 25));
+    }
+    await win.setFocus().catch(() => {});
+    window.setTimeout(() => focusTextarea(selection), 50);
+  }
+
   function startEdit() {
     draftRef.current = content;
     setEditing(true);
-    // Focus on next paint once the textarea is mounted.
-    requestAnimationFrame(() => {
-      const ta = taRef.current;
-      if (ta) {
-        ta.focus();
-        ta.setSelectionRange(ta.value.length, ta.value.length);
-      }
-    });
+    focusTextarea("end");
   }
 
   function commitEdit() {
@@ -205,7 +213,7 @@ export default function NoteWindow() {
 
       <div
         className="note-body"
-        onDoubleClick={(e) => {
+        onClick={(e) => {
           e.stopPropagation();
           if (!editing) startEdit();
         }}
@@ -222,7 +230,7 @@ export default function NoteWindow() {
             onChange={(e) => (draftRef.current = e.target.value)}
             onBlur={commitEdit}
             onKeyDown={(e) => {
-              if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
+              if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
                 e.preventDefault();
                 commitEdit();
               } else if (e.key === "Escape") {
@@ -232,7 +240,7 @@ export default function NoteWindow() {
             }}
           />
         ) : (
-          <div className="note-text">{content || "双击编辑…"}</div>
+          <div className="note-text">{content || "点击编辑…"}</div>
         )}
       </div>
     </div>

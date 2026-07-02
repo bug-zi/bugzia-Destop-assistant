@@ -381,6 +381,7 @@ textarea.f-input {
 
 .hk-tabs {
   display: flex;
+  flex-wrap: wrap;
   gap: 4px;
   margin-bottom: 10px;
 }
@@ -510,31 +511,30 @@ textarea.f-input {
   margin-top: 10px;
 }
 
-/* 冲突徽标 */
-.hk-badge {
+/* 快捷键状态点 */
+.hk-status-dot {
   display: inline-block;
-  font-size: 11px;
-  padding: 1px 8px;
-  border-radius: 999px;
-  border: 1px solid rgba(31, 36, 40, 0.16);
-  color: var(--bugzia-text-weak);
-  white-space: nowrap;
+  width: 9px;
+  height: 9px;
+  flex: 0 0 9px;
+  border-radius: 50%;
+  border: 1px solid rgba(31, 36, 40, 0.14);
+  box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.5);
 }
 
-.hk-badge.mute {
-  background: rgba(255, 255, 255, 0.5);
+.hk-status-dot.ok {
+  background: #22a06b;
+  border-color: rgba(34, 160, 107, 0.55);
 }
 
-.hk-badge.dup {
-  background: rgba(180, 35, 24, 0.1);
-  border-color: rgba(180, 35, 24, 0.3);
-  color: #b42318;
+.hk-status-dot.conflict {
+  background: #d92d20;
+  border-color: rgba(217, 45, 32, 0.55);
 }
 
-.hk-badge.bugzia {
-  background: rgba(31, 122, 61, 0.1);
-  border-color: rgba(31, 122, 61, 0.35);
-  color: #1f7a3d;
+.hk-status-dot.idle {
+  background: #98a2b3;
+  border-color: rgba(102, 112, 133, 0.45);
 }
 
 /* Bugzia 子标签 */
@@ -578,10 +578,71 @@ textarea.f-input {
   white-space: nowrap;
 }
 
+.key-btn.ghost.active {
+  background: rgba(31, 36, 40, 0.1);
+  border-color: rgba(31, 36, 40, 0.24);
+}
+
 .hk-list {
   display: flex;
   flex-direction: column;
   gap: 6px;
+}
+
+.hk-conflict-group {
+  border: 1px solid rgba(31, 36, 40, 0.12);
+  background: rgba(255, 255, 255, 0.55);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.hk-conflict-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 10px;
+  background: rgba(31, 36, 40, 0.05);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--bugzia-text);
+}
+
+.hk-conflict-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 10px;
+  border-top: 1px solid rgba(31, 36, 40, 0.08);
+}
+
+.hk-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 20px;
+  border-radius: 999px;
+  padding: 0 8px;
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.hk-badge.dup {
+  background: rgba(217, 45, 32, 0.1);
+  color: #b42318;
+}
+
+.hk-badge.bugzia {
+  background: rgba(180, 35, 24, 0.14);
+  color: #912018;
+}
+
+.hk-manual-form {
+  border: 1px solid rgba(31, 36, 40, 0.12);
+  background: rgba(255, 255, 255, 0.45);
+  border-radius: 8px;
+  padding: 10px;
+  margin-bottom: 10px;
 }
 
 .hk-item {

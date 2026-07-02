@@ -39,6 +39,7 @@ import {
 import { notesLoad, notesSave } from "../features/note/notesStore";
 import {
   NOTE_CHANGED,
+  NOTE_DESTROY_CURRENT,
   NOTE_DESTROYED,
   NOTE_HYDRATE,
   NOTE_PINNED,
@@ -197,6 +198,9 @@ export default function CommandCard() {
   // list (temp + pinned); only PINNED records are persisted to notes.json, so
   // scheduleNotesSave filters to pinned===true.
   const notesRef = useRef<NoteRecord[]>([]);
+  // "当前便笺" = 最近新建/编辑的那张。note_destroy 快捷键据此决定销毁哪张——
+  // 不依赖 OS 窗口焦点（便笺是无框透明窗，焦点语义不可靠），只认主窗口自己掌握的状态。
+  const activeNoteIdRef = useRef<string | null>(null);
   const notesSaveTimer = useRef<number | null>(null);
 
   /** Commit new settings to state + ref + debounced persistence. */
@@ -433,10 +437,20 @@ export default function CommandCard() {
   useEffect(() => {
     const hk = settings?.hotkey;
     if (!hk) return;
-    void invoke("reload_hotkeys", { summon: hk.summon, note: hk.note }).catch((e) => {
+    void invoke("reload_hotkeys", {
+      summon: hk.summon,
+      note: hk.note,
+      noteCreate: hk.note_create,
+      noteDestroy: hk.note_destroy,
+    }).catch((e) => {
       emitTo("settings", "hotkey://error", { message: String(e) }).catch(logErr("emit hotkey err"));
     });
-  }, [settings?.hotkey.summon, settings?.hotkey.note]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [
+    settings?.hotkey.summon,
+    settings?.hotkey.note,
+    settings?.hotkey.note_create,
+    settings?.hotkey.note_destroy,
+  ]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Agent notify can be enabled from Settings while Bugzia is already running.
   // The backend listener binds once; changing port/token still needs restart.
@@ -802,6 +816,7 @@ export default function CommandCard() {
           notesRef.current = notesRef.current.map((n) =>
             n.id === ev.payload.id ? { ...n, content: ev.payload.content } : n,
           );
+          activeNoteIdRef.current = ev.payload.id; // 编辑过 = 当前便笺
           scheduleNotesSave();
         }),
       );
@@ -816,13 +831,32 @@ export default function CommandCard() {
       );
       offs.push(
         await listen<{ id: string }>(NOTE_DESTROYED, (ev) => {
-          notesRef.current = notesRef.current.filter((n) => n.id !== ev.payload.id);
-          void closeNoteWindow(ev.payload.id).catch(logErr("close note"));
-          scheduleNotesSave();
+          destroyNoteById(ev.payload.id);
         }),
       );
-      // Note hotkey fired with no note window -> spawn a blank one (backend
-      // emits this from toggle_notes; main owns note creation).
+      // note_destroy 快捷键：后端只负责发触发事件，由主窗口（拥有全部便笺状态）
+      // 决定销毁哪张——当前便笺=最近新建/编辑的那张，否则回退到列表最后一张。
+      offs.push(
+        await listen(NOTE_DESTROY_CURRENT, () => {
+          // [诊断] 这行能证明"按键→后端→事件→主窗口"整条链路通了。验证后可移除。
+          console.log("[bugzia-hk] note://destroy-current 收到");
+          const notes = notesRef.current;
+          if (notes.length === 0) {
+            // 可见反馈：链路通了但没有便笺可销毁（也用来区分"键没生效" vs "逻辑问题"）。
+            setStatusText("没有可销毁的便笺");
+            window.setTimeout(() => setStatusText(""), 1200);
+            return;
+          }
+          let target = activeNoteIdRef.current;
+          if (!target || !notes.some((n) => n.id === target)) {
+            target = notes[notes.length - 1].id;
+          }
+          destroyNoteById(target);
+        }),
+      );
+      // Spawn a fresh blank note. Backend emits this from toggle_notes (the
+      // `note` hotkey, when no note window is open) AND from the `note_create`
+      // shortcut (always, even with notes open); main owns note creation.
       offs.push(
         await listen(NOTE_QUICK_CREATE, () => {
           void createBlankNote().catch(logErr("quick-create note"));
@@ -1138,6 +1172,16 @@ export default function CommandCard() {
     }
   }
 
+  /** Destroy one note by id: drop it from state, close its window, persist.
+   *  Shared by the note's own 销毁 button (NOTE_DESTROYED) and the note_destroy
+   *  hotkey (NOTE_DESTROY_CURRENT, after main picks the target id). */
+  function destroyNoteById(id: string) {
+    notesRef.current = notesRef.current.filter((n) => n.id !== id);
+    if (activeNoteIdRef.current === id) activeNoteIdRef.current = null;
+    void closeNoteWindow(id).catch(logErr("close note"));
+    scheduleNotesSave();
+  }
+
   /** Spawn a fresh (temporary) note at the cascaded lower-right spot. The window
    *  is always-on-top from the start (desktop overlay) and only persisted to
    *  notes.json once the user pins it. Soft-capped at 50 open notes. */
@@ -1159,6 +1203,7 @@ export default function CommandCard() {
     };
     notesRef.current = [...notesRef.current, record];
     await createNoteWindow(record, { w: s.w, h: s.h }, notesRef.current).catch(logErr("create note"));
+    activeNoteIdRef.current = record.id; // 新建即"当前便笺"，note_destroy 优先命中它
     // 钉住的便笺纳入 notes.json（重启恢复）；临时便笺只在内存，退出即消失。
     if (pinned) scheduleNotesSave();
     setStatusText("已生成便笺");

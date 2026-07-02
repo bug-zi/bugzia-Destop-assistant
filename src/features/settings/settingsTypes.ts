@@ -123,6 +123,12 @@ export interface HotkeySettings {
   /** Accelerator to toggle all notes: hide if any visible, else show; spawns a
    *  blank note when none exist. Empty = disabled. */
   note: string;
+  /** Accelerator to ALWAYS spawn a fresh blank note, even when notes already
+   *  exist (unlike `note`, which toggles the set). Empty = disabled (default). */
+  note_create: string;
+  /** Accelerator to destroy the currently-focused note. Empty = disabled
+   *  (default); no note focused = no-op. */
+  note_destroy: string;
 }
 
 /**
@@ -429,6 +435,8 @@ export const DEFAULT_SOCIAL_NOTIFY: SocialNotifySettings = {
 export const DEFAULT_HOTKEY: HotkeySettings = {
   summon: "alt+space", // 召唤键；已显示时再按一次即隐藏（切换）
   note: "alt+n", // 便签键；有便签显示则收起，否则呼出，一条都没有则新建空白便签
+  note_create: "", // 直接新建便签键；留空=未启用，由用户在设置里自定义
+  note_destroy: "", // 销毁当前便签键；留空=未启用，由用户在设置里自定义
 };
 
 export const DEFAULT_SETTINGS: AppSettings = {

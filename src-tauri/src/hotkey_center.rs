@@ -9,9 +9,11 @@
 //! 「为终局架构留接口」要求）。
 
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
-use std::path::Path;
-use tauri::AppHandle;
+use std::collections::{HashMap, HashSet};
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
+use tauri::{AppHandle, Manager};
 
 use crate::settings::load_settings;
 use crate::shortcut_hotkeys::scan_shortcuts_internal;
@@ -28,12 +30,13 @@ pub enum NormalizedKey {
     Char(char),
     F(u8),
     Space,
+    Named(String),
 }
 
-/// 归一化快捷键。`.lnk` 不支持 Win，故不建模 Win；含 Win 的组合 `parse_accel`
-/// 直接返回 `None`（既不参与 `.lnk` 冲突比较，也不会被写入 `.lnk`）。
+/// 归一化快捷键。中心模型支持 Win；`.lnk` 写入层会单独拒绝 Win。
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct NormalizedAccelerator {
+    pub win: bool,
     pub ctrl: bool,
     pub alt: bool,
     pub shift: bool,
@@ -41,14 +44,15 @@ pub struct NormalizedAccelerator {
 }
 
 /// 解析快捷键串为归一化形式。大小写不敏感，按 `+` 切分。
-/// 修饰键：`ctrl`/`control`、`alt`/`opt`/`option`、`shift`；遇到
-/// `win`/`super`/`meta` 返回 `None`（`.lnk` 不支持，整体放弃）。
-/// 主键：`f1..f24`、`a..z`、`0..9`、`space`。空串 / 多主键 / 无法识别返回 `None`。
+/// 修饰键：`win`/`super`/`meta`、`ctrl`/`control`、`alt`/`opt`/`option`、`shift`。
+/// 主键：`f1..f24`、`a..z`、`0..9`、`space` 和少量常见系统键。
+/// 空串 / 多主键 / 无法识别返回 `None`。
 pub fn parse_accel(s: &str) -> Option<NormalizedAccelerator> {
     let s = s.trim();
     if s.is_empty() {
         return None;
     }
+    let mut win = false;
     let mut ctrl = false;
     let mut alt = false;
     let mut shift = false;
@@ -62,7 +66,7 @@ pub fn parse_accel(s: &str) -> Option<NormalizedAccelerator> {
             "ctrl" | "control" => ctrl = true,
             "alt" | "opt" | "option" => alt = true,
             "shift" => shift = true,
-            "win" | "super" | "meta" => return None, // .lnk 不支持 -> 整体放弃
+            "win" | "super" | "meta" => win = true,
             "space" => {
                 if key.is_some() {
                     return None;
@@ -78,6 +82,7 @@ pub fn parse_accel(s: &str) -> Option<NormalizedAccelerator> {
         }
     }
     Some(NormalizedAccelerator {
+        win,
         ctrl,
         alt,
         shift,
@@ -101,13 +106,28 @@ fn parse_key_token(t: &str) -> Option<NormalizedKey> {
         }
         return None;
     }
-    None
+    match t {
+        "." => Some(NormalizedKey::Named(".".into())),
+        "left" | "arrowleft" => Some(NormalizedKey::Named("Left".into())),
+        "right" | "arrowright" => Some(NormalizedKey::Named("Right".into())),
+        "up" | "arrowup" => Some(NormalizedKey::Named("Up".into())),
+        "down" | "arrowdown" => Some(NormalizedKey::Named("Down".into())),
+        "tab" => Some(NormalizedKey::Named("Tab".into())),
+        "enter" | "return" => Some(NormalizedKey::Named("Enter".into())),
+        "esc" | "escape" => Some(NormalizedKey::Named("Esc".into())),
+        "delete" | "del" => Some(NormalizedKey::Named("Delete".into())),
+        "backspace" => Some(NormalizedKey::Named("Backspace".into())),
+        _ => None,
+    }
 }
 
 /// 展示形式：固定顺序 `Ctrl+Alt+Shift+主键`，混合大小写。
 /// 例：`Ctrl+Alt+F5`、`Alt+Space`、`Alt+N`。
 pub fn format_accel(a: &NormalizedAccelerator) -> String {
     let mut parts: Vec<String> = Vec::new();
+    if a.win {
+        parts.push("Win".into());
+    }
     if a.ctrl {
         parts.push("Ctrl".into());
     }
@@ -121,6 +141,7 @@ pub fn format_accel(a: &NormalizedAccelerator) -> String {
         NormalizedKey::Char(c) => c.to_string(),
         NormalizedKey::F(n) => format!("F{n}"),
         NormalizedKey::Space => "Space".into(),
+        NormalizedKey::Named(name) => name.clone(),
     });
     parts.join("+")
 }
@@ -154,8 +175,10 @@ pub struct HotkeyEntry {
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub enum HotkeySourceType {
     Bugzia,
+    WindowsSystem,
     ShortcutLink,
-    // 预留：AppConfig, SystemDefault, ProbedOccupied, BlockRule, Manual
+    Manual,
+    // 预留：AppConfig, ProbedOccupied, BlockRule
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -222,12 +245,199 @@ pub enum ShortcutStatus {
     OutsideWhitelist,
 }
 
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct ManualHotkeyEntry {
+    pub id: String,
+    pub app_name: String,
+    pub title: String,
+    pub accelerator: String,
+    pub scope: HotkeyScope,
+    pub notes: String,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct ManualHotkeyInput {
+    pub app_name: String,
+    pub title: String,
+    pub accelerator: String,
+    pub scope: HotkeyScope,
+    pub notes: String,
+}
+
+// ---------------------------------------------------------------------------
+// Windows 系统快捷键只读目录 + 手动登记应用快捷键
+// ---------------------------------------------------------------------------
+
+fn windows_system_entries() -> Vec<HotkeyEntry> {
+    [
+        ("windows.lock", "Win+L", "锁定电脑", "系统安全", ManageLevel::HighRisk),
+        ("windows.security", "Ctrl+Alt+Delete", "安全选项", "系统安全", ManageLevel::HighRisk),
+        ("windows.task_switch", "Alt+Tab", "切换窗口", "窗口管理", ManageLevel::ReadOnly),
+        ("windows.close_window", "Alt+F4", "关闭当前窗口", "窗口管理", ManageLevel::ReadOnly),
+        ("windows.desktop", "Win+D", "显示桌面", "桌面", ManageLevel::ReadOnly),
+        ("windows.explorer", "Win+E", "打开文件资源管理器", "系统应用", ManageLevel::ReadOnly),
+        ("windows.run", "Win+R", "打开运行", "系统应用", ManageLevel::ReadOnly),
+        ("windows.settings", "Win+I", "打开设置", "系统应用", ManageLevel::ReadOnly),
+        ("windows.search", "Win+S", "打开搜索", "系统应用", ManageLevel::ReadOnly),
+        ("windows.clipboard", "Win+V", "剪贴板历史", "剪贴板", ManageLevel::ReadOnly),
+        ("windows.screenshot", "Win+Shift+S", "截图", "截图", ManageLevel::ReadOnly),
+        ("windows.emoji", "Win+.", "表情符号面板", "输入", ManageLevel::ReadOnly),
+        ("windows.input_switch", "Win+Space", "切换输入语言", "输入", ManageLevel::ReadOnly),
+        ("windows.virtual_desktop_new", "Win+Ctrl+D", "新建虚拟桌面", "虚拟桌面", ManageLevel::ReadOnly),
+        ("windows.virtual_desktop_left", "Win+Ctrl+Left", "切换到左侧虚拟桌面", "虚拟桌面", ManageLevel::ReadOnly),
+        ("windows.virtual_desktop_right", "Win+Ctrl+Right", "切换到右侧虚拟桌面", "虚拟桌面", ManageLevel::ReadOnly),
+        ("windows.snap_left", "Win+Left", "窗口贴靠左侧", "窗口管理", ManageLevel::ReadOnly),
+        ("windows.snap_right", "Win+Right", "窗口贴靠右侧", "窗口管理", ManageLevel::ReadOnly),
+        ("windows.quick_settings", "Win+A", "快速设置", "系统面板", ManageLevel::ReadOnly),
+        ("windows.notifications", "Win+N", "通知中心", "系统面板", ManageLevel::ReadOnly),
+        ("windows.widgets", "Win+W", "小组件", "系统面板", ManageLevel::ReadOnly),
+        ("windows.accessibility", "Win+U", "辅助功能设置", "辅助功能", ManageLevel::ReadOnly),
+    ]
+    .into_iter()
+    .map(|(id, display, title, category, level)| HotkeyEntry {
+        id: id.to_string(),
+        display: display.to_string(),
+        title: title.to_string(),
+        app_name: format!("Windows / {category}"),
+        source_type: HotkeySourceType::WindowsSystem,
+        scope: HotkeyScope::Global,
+        manage_level: level,
+        source_path: None,
+        target: None,
+        can_modify: false,
+        backup_available: false,
+        conflict: ConflictInfo::default(),
+    })
+    .collect()
+}
+
+fn manual_hotkeys_path(app: &AppHandle) -> Result<PathBuf, String> {
+    let dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("resolve app_data_dir: {e}"))?;
+    fs::create_dir_all(&dir).map_err(|e| format!("create app data dir: {e}"))?;
+    Ok(dir.join("manual-hotkeys.json"))
+}
+
+fn center_hidden_path(app: &AppHandle) -> Result<PathBuf, String> {
+    let dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("resolve app_data_dir: {e}"))?;
+    fs::create_dir_all(&dir).map_err(|e| format!("create app data dir: {e}"))?;
+    Ok(dir.join("hotkey-center-hidden.json"))
+}
+
+fn atomic_write_json(path: &Path, data: &str) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|e| format!("create dir: {e}"))?;
+    }
+    let tmp = path.with_extension("json.tmp");
+    fs::write(&tmp, data).map_err(|e| format!("write tmp: {e}"))?;
+    fs::rename(&tmp, path).map_err(|e| format!("rename: {e}"))?;
+    Ok(())
+}
+
+fn load_manual_hotkeys(app: &AppHandle) -> Vec<ManualHotkeyEntry> {
+    let p = match manual_hotkeys_path(app) {
+        Ok(p) => p,
+        Err(_) => return vec![],
+    };
+    fs::read_to_string(&p)
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default()
+}
+
+fn save_manual_hotkeys(app: &AppHandle, entries: &[ManualHotkeyEntry]) -> Result<(), String> {
+    let p = manual_hotkeys_path(app)?;
+    let data = serde_json::to_string_pretty(entries).map_err(|e| format!("serialize: {e}"))?;
+    atomic_write_json(&p, &data)
+}
+
+fn load_center_hidden(app: &AppHandle) -> HashSet<String> {
+    let p = match center_hidden_path(app) {
+        Ok(p) => p,
+        Err(_) => return HashSet::new(),
+    };
+    fs::read_to_string(&p)
+        .ok()
+        .and_then(|s| serde_json::from_str::<Vec<String>>(&s).ok())
+        .unwrap_or_default()
+        .into_iter()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect()
+}
+
+fn save_center_hidden(app: &AppHandle, hidden: &HashSet<String>) -> Result<(), String> {
+    let p = center_hidden_path(app)?;
+    let mut entries: Vec<String> = hidden.iter().cloned().collect();
+    entries.sort();
+    let data = serde_json::to_string_pretty(&entries).map_err(|e| format!("serialize: {e}"))?;
+    atomic_write_json(&p, &data)
+}
+
+fn can_hide_center_entry(entry: &HotkeyEntry) -> bool {
+    matches!(
+        entry.source_type,
+        HotkeySourceType::WindowsSystem | HotkeySourceType::Manual
+    )
+}
+
+fn now_ms() -> u128 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0)
+}
+
+fn validate_manual_input(input: ManualHotkeyInput) -> Result<ManualHotkeyInput, String> {
+    let app_name = input.app_name.trim().to_string();
+    let title = input.title.trim().to_string();
+    let accelerator = input.accelerator.trim().to_string();
+    let notes = input.notes.trim().to_string();
+    if app_name.is_empty() {
+        return Err("请输入应用名称".into());
+    }
+    if title.is_empty() {
+        return Err("请输入功能名称".into());
+    }
+    let parsed = parse_accel(&accelerator)
+        .ok_or_else(|| "请输入有效快捷键，如 Ctrl+Alt+K 或 Win+Shift+S".to_string())?;
+    Ok(ManualHotkeyInput {
+        app_name,
+        title,
+        accelerator: format_accel(&parsed),
+        scope: input.scope,
+        notes,
+    })
+}
+
+fn manual_to_entry(item: ManualHotkeyEntry) -> HotkeyEntry {
+    HotkeyEntry {
+        id: item.id,
+        display: item.accelerator,
+        title: item.title,
+        app_name: item.app_name,
+        source_type: HotkeySourceType::Manual,
+        scope: item.scope,
+        manage_level: ManageLevel::DirectModify,
+        source_path: None,
+        target: if item.notes.is_empty() { None } else { Some(item.notes) },
+        can_modify: true,
+        backup_available: false,
+        conflict: ConflictInfo::default(),
+    }
+}
+
 // ---------------------------------------------------------------------------
 // 聚合构造 + 冲突标注
 // ---------------------------------------------------------------------------
 
 /// 由 Bugzia 自身快捷键 + `.lnk` 扫描结果构造统一条目（不含冲突计算）。
-fn build_entries(app: &AppHandle) -> Result<Vec<HotkeyEntry>, String> {
+fn build_entries_raw(app: &AppHandle) -> Result<Vec<HotkeyEntry>, String> {
     let mut out: Vec<HotkeyEntry> = Vec::new();
 
     // Bugzia 自身：summon / note（来自 settings.json）。读失败则用默认值，不阻断扫描。
@@ -235,6 +445,8 @@ fn build_entries(app: &AppHandle) -> Result<Vec<HotkeyEntry>, String> {
     for (id, title, raw) in [
         ("bugzia.summon", "召唤输入框", hotkey.summon.as_str()),
         ("bugzia.note", "召唤便笺", hotkey.note.as_str()),
+        ("bugzia.note_create", "直接新建便笺", hotkey.note_create.as_str()),
+        ("bugzia.note_destroy", "销毁当前便笺", hotkey.note_destroy.as_str()),
     ] {
         // parse 失败（如含 Win）时回退到原始串，避免把有效键显示成空。
         let display = match parse_accel(raw) {
@@ -255,6 +467,12 @@ fn build_entries(app: &AppHandle) -> Result<Vec<HotkeyEntry>, String> {
             backup_available: false,
             conflict: ConflictInfo::default(),
         });
+    }
+
+    out.extend(windows_system_entries());
+
+    for item in load_manual_hotkeys(app) {
+        out.push(manual_to_entry(item));
     }
 
     // .lnk 快捷方式。
@@ -279,6 +497,13 @@ fn build_entries(app: &AppHandle) -> Result<Vec<HotkeyEntry>, String> {
         });
     }
     Ok(out)
+}
+
+fn build_entries(app: &AppHandle) -> Result<Vec<HotkeyEntry>, String> {
+    let hidden = load_center_hidden(app);
+    let mut entries = build_entries_raw(app)?;
+    entries.retain(|e| !hidden.contains(&e.id));
+    Ok(entries)
 }
 
 /// 来源应用名：目标可执行文件名优先；取不到就用 `.lnk` 名字。
@@ -340,4 +565,98 @@ pub fn hotkey_center_detect_conflicts(app: AppHandle) -> Result<Vec<HotkeyEntry>
     let mut entries = build_entries(&app)?;
     annotate_conflicts(&mut entries);
     Ok(entries)
+}
+
+#[tauri::command]
+pub fn manual_hotkey_entries_list(app: AppHandle) -> Result<Vec<ManualHotkeyEntry>, String> {
+    Ok(load_manual_hotkeys(&app))
+}
+
+#[tauri::command]
+pub fn manual_hotkey_entry_add(
+    app: AppHandle,
+    input: ManualHotkeyInput,
+) -> Result<ManualHotkeyEntry, String> {
+    let input = validate_manual_input(input)?;
+    let mut entries = load_manual_hotkeys(&app);
+    let mut id = format!("manual.{}", now_ms());
+    while entries.iter().any(|e| e.id == id) {
+        id = format!("manual.{}", now_ms() + entries.len() as u128 + 1);
+    }
+    let entry = ManualHotkeyEntry {
+        id,
+        app_name: input.app_name,
+        title: input.title,
+        accelerator: input.accelerator,
+        scope: input.scope,
+        notes: input.notes,
+    };
+    entries.push(entry.clone());
+    save_manual_hotkeys(&app, &entries)?;
+    Ok(entry)
+}
+
+#[tauri::command]
+pub fn manual_hotkey_entry_update(
+    app: AppHandle,
+    id: String,
+    input: ManualHotkeyInput,
+) -> Result<ManualHotkeyEntry, String> {
+    let input = validate_manual_input(input)?;
+    let mut entries = load_manual_hotkeys(&app);
+    let entry = entries
+        .iter_mut()
+        .find(|e| e.id == id)
+        .ok_or_else(|| "未找到这条手动登记".to_string())?;
+    entry.app_name = input.app_name;
+    entry.title = input.title;
+    entry.accelerator = input.accelerator;
+    entry.scope = input.scope;
+    entry.notes = input.notes;
+    let updated = entry.clone();
+    save_manual_hotkeys(&app, &entries)?;
+    Ok(updated)
+}
+
+#[tauri::command]
+pub fn manual_hotkey_entry_remove(app: AppHandle, id: String) -> Result<bool, String> {
+    let mut entries = load_manual_hotkeys(&app);
+    let before = entries.len();
+    entries.retain(|e| e.id != id);
+    let removed = entries.len() != before;
+    save_manual_hotkeys(&app, &entries)?;
+    Ok(removed)
+}
+
+#[tauri::command]
+pub fn hotkey_center_hide_entry(app: AppHandle, entry_id: String) -> Result<bool, String> {
+    let entries = build_entries_raw(&app)?;
+    let entry = entries
+        .iter()
+        .find(|e| e.id == entry_id)
+        .ok_or_else(|| "未找到这条快捷键".to_string())?;
+    if !can_hide_center_entry(entry) {
+        return Err("这条快捷键不支持从快捷键中心隐藏".into());
+    }
+    let mut hidden = load_center_hidden(&app);
+    hidden.insert(entry_id);
+    save_center_hidden(&app, &hidden)?;
+    Ok(true)
+}
+
+#[tauri::command]
+pub fn hotkey_center_hidden_list(app: AppHandle) -> Result<Vec<HotkeyEntry>, String> {
+    let hidden = load_center_hidden(&app);
+    let mut entries = build_entries_raw(&app)?;
+    entries.retain(|e| can_hide_center_entry(e) && hidden.contains(&e.id));
+    annotate_conflicts(&mut entries);
+    Ok(entries)
+}
+
+#[tauri::command]
+pub fn hotkey_center_unhide_entry(app: AppHandle, entry_id: String) -> Result<bool, String> {
+    let mut hidden = load_center_hidden(&app);
+    let removed = hidden.remove(&entry_id);
+    save_center_hidden(&app, &hidden)?;
+    Ok(removed)
 }

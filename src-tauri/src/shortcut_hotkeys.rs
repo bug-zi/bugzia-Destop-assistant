@@ -11,6 +11,7 @@
 //! 初始化 Shell COM。扫描复用一个 ShellLink 实例多次 Load。
 
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -31,6 +32,7 @@ pub fn word_to_accel(w: u16) -> Option<NormalizedAccelerator> {
     let hi = ((w >> 8) & 0xFF) as u8;
     let key = vk_to_key(lo)?;
     Some(NormalizedAccelerator {
+        win: false,
         ctrl: hi & 0x02 != 0,
         alt: hi & 0x04 != 0,
         shift: hi & 0x01 != 0,
@@ -40,6 +42,9 @@ pub fn word_to_accel(w: u16) -> Option<NormalizedAccelerator> {
 
 /// 把归一化形式编码为 `.lnk` WORD。不支持的主键返回 `None`。
 pub fn accel_to_word(a: &NormalizedAccelerator) -> Option<u16> {
+    if a.win {
+        return None;
+    }
     let lo = key_to_vk(&a.key)?;
     let mut hi: u8 = 0;
     if a.shift {
@@ -82,6 +87,7 @@ fn key_to_vk(k: &NormalizedKey) -> Option<u8> {
                 None
             }
         }
+        NormalizedKey::Named(_) => None,
     }
 }
 
@@ -157,6 +163,21 @@ fn walk_lnk(dir: &Path, loc: ShortcutLocation, out: &mut Vec<(PathBuf, ShortcutL
             out.push((p, loc.clone()));
         }
     }
+}
+
+fn should_show_shortcut(path: &Path) -> bool {
+    let name = path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("")
+        .trim()
+        .to_lowercase();
+    name == "回收站"
+        || name == "此电脑"
+        || name == "recycle bin"
+        || name == "this pc"
+        || name.contains("kugou")
+        || name.contains("酷狗")
 }
 
 // ---------------------------------------------------------------------------
@@ -360,6 +381,42 @@ fn save_manifest(app: &AppHandle, entries: &[BackupEntry]) -> Result<(), String>
     atomic_write_json(&p, &data)
 }
 
+fn hidden_shortcuts_path(app: &AppHandle) -> Result<PathBuf, String> {
+    let dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("resolve app_data_dir: {e}"))?;
+    fs::create_dir_all(&dir).map_err(|e| format!("create app data dir: {e}"))?;
+    Ok(dir.join("shortcut-hotkey-hidden.json"))
+}
+
+fn normalize_hidden_path(path: &str) -> String {
+    path.trim().to_lowercase()
+}
+
+fn load_hidden_shortcuts(app: &AppHandle) -> HashSet<String> {
+    let p = match hidden_shortcuts_path(app) {
+        Ok(p) => p,
+        Err(_) => return HashSet::new(),
+    };
+    fs::read_to_string(&p)
+        .ok()
+        .and_then(|s| serde_json::from_str::<Vec<String>>(&s).ok())
+        .unwrap_or_default()
+        .into_iter()
+        .map(|s| normalize_hidden_path(&s))
+        .filter(|s| !s.is_empty())
+        .collect()
+}
+
+fn save_hidden_shortcuts(app: &AppHandle, hidden: &HashSet<String>) -> Result<(), String> {
+    let p = hidden_shortcuts_path(app)?;
+    let mut entries: Vec<String> = hidden.iter().cloned().collect();
+    entries.sort();
+    let data = serde_json::to_string_pretty(&entries).map_err(|e| format!("serialize: {e}"))?;
+    atomic_write_json(&p, &data)
+}
+
 fn latest_backup_for(app: &AppHandle, path: &str) -> Option<BackupEntry> {
     let mut entries: Vec<BackupEntry> = load_manifest(app)
         .into_iter()
@@ -415,6 +472,9 @@ pub fn scan_shortcuts_internal(app: &AppHandle) -> Vec<ShortcutHotkeyItem> {
     for (loc, root) in allowed_roots() {
         walk_lnk(&root, loc, &mut found);
     }
+    found.retain(|(p, _)| should_show_shortcut(p));
+    let hidden = load_hidden_shortcuts(app);
+    found.retain(|(p, _)| !hidden.contains(&normalize_hidden_path(&p.to_string_lossy())));
     let paths: Vec<PathBuf> = found.iter().map(|(p, _)| p.clone()).collect();
     let metas = read_all_lnk(paths);
     let backed: std::collections::HashSet<String> =
@@ -528,6 +588,9 @@ pub fn shortcut_hotkey_set(
     let accel = parse_accel(&hotkey).ok_or_else(|| {
         "不支持的组合键，请输入类似 Ctrl+Alt+F5 的格式（不支持 Win 键）".to_string()
     })?;
+    if accel.win {
+        return Err("快捷方式热键不支持 Win 键".into());
+    }
     if !(accel.ctrl || accel.alt || accel.shift) {
         return Err("快捷方式热键需至少包含一个修饰键（Ctrl/Alt/Shift）".into());
     }
@@ -577,4 +640,39 @@ pub fn shortcut_hotkey_restore(
 #[tauri::command]
 pub fn shortcut_hotkey_reveal(_app: AppHandle, shortcut_path: String) -> Result<bool, String> {
     reveal_in_explorer(&shortcut_path)
+}
+
+#[tauri::command]
+pub fn shortcut_hotkey_hide(app: AppHandle, shortcut_path: String) -> Result<bool, String> {
+    let normalized = normalize_hidden_path(&shortcut_path);
+    if normalized.is_empty() {
+        return Err("快捷方式路径为空".into());
+    }
+    let mut hidden = load_hidden_shortcuts(&app);
+    hidden.insert(normalized);
+    save_hidden_shortcuts(&app, &hidden)?;
+    Ok(true)
+}
+
+#[tauri::command]
+pub fn shortcut_hotkey_hidden_list(app: AppHandle) -> Result<Vec<ShortcutHotkeyItem>, String> {
+    let mut paths: Vec<String> = load_hidden_shortcuts(&app).into_iter().collect();
+    paths.sort();
+    let mut out = Vec::with_capacity(paths.len());
+    for path in paths {
+        out.push(build_item(&app, &PathBuf::from(path))?);
+    }
+    Ok(out)
+}
+
+#[tauri::command]
+pub fn shortcut_hotkey_unhide(app: AppHandle, shortcut_path: String) -> Result<bool, String> {
+    let normalized = normalize_hidden_path(&shortcut_path);
+    if normalized.is_empty() {
+        return Err("快捷方式路径为空".into());
+    }
+    let mut hidden = load_hidden_shortcuts(&app);
+    let removed = hidden.remove(&normalized);
+    save_hidden_shortcuts(&app, &hidden)?;
+    Ok(removed)
 }

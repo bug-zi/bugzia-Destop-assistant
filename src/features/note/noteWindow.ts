@@ -158,6 +158,8 @@ async function defaultPlace(
   }
 
   const { x, y } = packTopLeft(rects, w, h, waW, waH);
+  // [诊断] 重叠排查：打印工作区、已有便笺矩形、本次落点。验证后移除。
+  console.log("[bugzia-note] place", { label, waW, waH, w, h, rects, chosen: { x, y } });
   await placeAt(win, label, Math.max(0, Math.round(x)), Math.max(0, Math.round(y)), w, h);
 }
 

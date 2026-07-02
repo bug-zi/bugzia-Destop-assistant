@@ -365,6 +365,17 @@ pub struct HotkeySettings {
     /// `/note` command). Same `#[serde(default)]` rationale as `summon`.
     #[serde(default = "default_hotkey_note")]
     pub note: String,
+    /// Accelerator to ALWAYS spawn a fresh blank note, even when notes already
+    /// exist (unlike `note`, which toggles the whole set). Empty = disabled
+    /// (default): the user opts in by assigning a combo in Settings. Same
+    /// `#[serde(default)]` rationale as `summon`.
+    #[serde(default)]
+    pub note_create: String,
+    /// Accelerator to destroy the currently-focused note (the "current note").
+    /// Empty = disabled (default): the user opts in by assigning a combo in
+    /// Settings. Same `#[serde(default)]` rationale as `summon`.
+    #[serde(default)]
+    pub note_destroy: String,
 }
 
 fn default_hotkey_summon() -> String {
@@ -380,6 +391,9 @@ impl Default for HotkeySettings {
         Self {
             summon: default_hotkey_summon(),
             note: default_hotkey_note(),
+            // Opt-in bindings: empty until the user assigns a combo in Settings.
+            note_create: String::new(),
+            note_destroy: String::new(),
         }
     }
 }
@@ -940,5 +954,20 @@ mod tests {
         let parsed: AppSettings = serde_json::from_value(legacy).unwrap();
         assert_eq!(parsed.hotkey.summon, "ctrl+k"); // user value preserved
         assert_eq!(parsed.hotkey.note, "alt+n"); // new field defaulted, not wiped
+    }
+
+    /// A settings.json whose `hotkey` predates `note_create` / `note_destroy`
+    /// must still load — both default to "" (disabled, opt-in), while the user's
+    /// `summon` / `note` are preserved untouched.
+    #[test]
+    fn legacy_settings_with_hotkey_summon_note_loads_create_destroy_empty() {
+        let legacy = serde_json::json!({
+            "hotkey": { "summon": "ctrl+k", "note": "alt+n" }
+        });
+        let parsed: AppSettings = serde_json::from_value(legacy).unwrap();
+        assert_eq!(parsed.hotkey.summon, "ctrl+k"); // preserved
+        assert_eq!(parsed.hotkey.note, "alt+n"); // preserved
+        assert_eq!(parsed.hotkey.note_create, ""); // new field defaulted empty
+        assert_eq!(parsed.hotkey.note_destroy, ""); // new field defaulted empty
     }
 }

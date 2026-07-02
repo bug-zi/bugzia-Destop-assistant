@@ -63,3 +63,29 @@ export async function revealShortcut(shortcutPath: string): Promise<boolean> {
     return false;
   }
 }
+
+/**
+ * 从快捷键中心隐藏某个快捷方式条目。只写入 Bugzia 的隐藏列表，不删除 .lnk 文件。
+ */
+export async function hideShortcutHotkey(shortcutPath: string): Promise<boolean> {
+  return await invoke<boolean>("shortcut_hotkey_hide", { shortcutPath });
+}
+
+/**
+ * 查看已从快捷键中心隐藏的快捷方式条目。
+ */
+export async function listHiddenShortcutHotkeys(): Promise<ShortcutHotkeyItem[]> {
+  try {
+    return await invoke<ShortcutHotkeyItem[]>("shortcut_hotkey_hidden_list");
+  } catch (e) {
+    console.error("[bugzia] shortcut_hotkey_hidden_list failed", e);
+    return [];
+  }
+}
+
+/**
+ * 从隐藏列表移除，让该快捷方式重新出现在快捷键中心。
+ */
+export async function unhideShortcutHotkey(shortcutPath: string): Promise<boolean> {
+  return await invoke<boolean>("shortcut_hotkey_unhide", { shortcutPath });
+}

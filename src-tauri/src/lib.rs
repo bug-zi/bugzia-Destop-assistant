@@ -25,9 +25,14 @@ use recyclebin::pet_eat_files;
 use settings::{
     clear_api_key, load_api_key, load_settings, save_api_key, save_settings, AgentNotifySettings,
 };
-use hotkey_center::{hotkey_center_detect_conflicts, hotkey_center_scan};
+use hotkey_center::{
+    hotkey_center_detect_conflicts, hotkey_center_hidden_list, hotkey_center_hide_entry,
+    hotkey_center_scan, hotkey_center_unhide_entry, manual_hotkey_entries_list,
+    manual_hotkey_entry_add, manual_hotkey_entry_remove, manual_hotkey_entry_update,
+};
 use shortcut_hotkeys::{
-    shortcut_hotkey_clear, shortcut_hotkey_reveal, shortcut_hotkey_restore, shortcut_hotkey_set,
+    shortcut_hotkey_clear, shortcut_hotkey_hidden_list, shortcut_hotkey_hide,
+    shortcut_hotkey_reveal, shortcut_hotkey_restore, shortcut_hotkey_set, shortcut_hotkey_unhide,
     shortcut_hotkeys_scan,
 };
 
@@ -128,22 +133,49 @@ fn toggle_notes(app: &AppHandle) {
     let _ = app.emit_to("main", "note://toggle", ());
 }
 
-/// (Re)register the input-bar and note global hotkeys. Clears any previously
-/// registered shortcuts first so a settings change fully replaces both bindings
-/// together (clearing is all-or-nothing, so the two keys MUST be registered in
-/// the same call — otherwise reloading one would unregister the other). Each
-/// accelerator is bound via `on_shortcut` (independent of any global handler):
-/// `summon` toggles the input bar, `note` toggles the note set. An empty
-/// accelerator is skipped; an unparseable one is recorded as an error naming the
-/// offending combo. BOTH keys are always attempted so that one bad combo does
-/// not silently drop the other; all errors are joined and surfaced together.
-fn register_hotkeys(app: &AppHandle, summon: &str, note: &str) -> Result<(), String> {
+/// The `note_destroy` shortcut asks MAIN to destroy the "current note". Main
+/// owns all note state (the authoritative note list), so it — not OS window
+/// focus — decides which note "current" means. Focus-based detection proved
+/// unreliable for these `skipTaskbar` / borderless / transparent note windows
+/// (their `is_focused()` / focus events do not fire like normal windows), so
+/// the choice lives in main where the data is. This just pings main; main
+/// reuses the same per-id destroy path the note's own 销毁 button uses.
+fn destroy_current_note(app: &AppHandle) {
+    let _ = app.emit_to("main", "note://destroy-current", ());
+}
+
+/// (Re)register the global hotkeys. Clears any previously registered shortcuts
+/// first so a settings change fully replaces every binding together (clearing is
+/// all-or-nothing, so all keys MUST be registered in the same call — otherwise
+/// reloading one would unregister the others). Each accelerator is bound via
+/// `on_shortcut` (independent of any global handler): `summon` toggles the input
+/// bar, `note` toggles the note set, `note_create` always spawns a fresh blank
+/// note (even when notes already exist), `note_destroy` destroys the focused
+/// note. An empty accelerator is skipped (the binding is opt-in); an unparseable
+/// one is recorded as an error naming the offending combo. ALL keys are always
+/// attempted so that one bad combo does not silently drop the others; errors are
+/// joined and surfaced together.
+fn register_hotkeys(
+    app: &AppHandle,
+    summon: &str,
+    note: &str,
+    note_create: &str,
+    note_destroy: &str,
+) -> Result<(), String> {
     let gs = app.global_shortcut();
     // Clear every previous binding so a change fully replaces them.
     let _ = gs.unregister_all();
     let summon = summon.trim().to_lowercase();
     let note = note.trim().to_lowercase();
+    let note_create = note_create.trim().to_lowercase();
+    let note_destroy = note_destroy.trim().to_lowercase();
     let mut errs: Vec<String> = Vec::new();
+
+    // [诊断] 打印本次注册收到的四个键值，定位「新键不生效」断在哪一层。
+    // 验证后移除。
+    eprintln!(
+        "[bugzia-hk] register_hotkeys: summon={summon:?} note={note:?} note_create={note_create:?} note_destroy={note_destroy:?}"
+    );
 
     if !summon.is_empty() {
         if let Err(e) = gs.on_shortcut(summon.as_str(), |app, _shortcut, event| {
@@ -163,6 +195,30 @@ fn register_hotkeys(app: &AppHandle, summon: &str, note: &str) -> Result<(), Str
             errs.push(format!("便签键「{note}」无效：{e}"));
         }
     }
+    if !note_create.is_empty() {
+        match gs.on_shortcut(note_create.as_str(), |app, _shortcut, event| {
+            if event.state == ShortcutState::Pressed {
+                eprintln!("[bugzia-hk] note_create 触发 -> emit note://quick-create");
+                // Always spawn a blank note — even when notes already exist
+                // (unlike `note`, which toggles the set). Main owns creation.
+                let _ = app.emit_to("main", "note://quick-create", ());
+            }
+        }) {
+            Ok(()) => eprintln!("[bugzia-hk] 已注册 note_create = {note_create:?}"),
+            Err(e) => errs.push(format!("新建便签键「{note_create}」无效：{e}")),
+        }
+    }
+    if !note_destroy.is_empty() {
+        match gs.on_shortcut(note_destroy.as_str(), |app, _shortcut, event| {
+            if event.state == ShortcutState::Pressed {
+                eprintln!("[bugzia-hk] note_destroy 触发 -> destroy_current_note");
+                destroy_current_note(app);
+            }
+        }) {
+            Ok(()) => eprintln!("[bugzia-hk] 已注册 note_destroy = {note_destroy:?}"),
+            Err(e) => errs.push(format!("销毁便签键「{note_destroy}」无效：{e}")),
+        }
+    }
 
     if errs.is_empty() {
         Ok(())
@@ -175,8 +231,14 @@ fn register_hotkeys(app: &AppHandle, summon: &str, note: &str) -> Result<(), Str
 /// window whenever the hotkey settings change, so edits apply immediately
 /// without a restart. Returns any parse error(s) for the UI to surface.
 #[tauri::command]
-fn reload_hotkeys(app: AppHandle, summon: String, note: String) -> Result<(), String> {
-    register_hotkeys(&app, &summon, &note)
+fn reload_hotkeys(
+    app: AppHandle,
+    summon: String,
+    note: String,
+    note_create: String,
+    note_destroy: String,
+) -> Result<(), String> {
+    register_hotkeys(&app, &summon, &note, &note_create, &note_destroy)
 }
 
 /// Pin (or unpin) the result overlay above every other window. Driven by the
@@ -725,7 +787,13 @@ pub fn run() {
                 // Register the input-bar hotkeys from saved settings. Best-effort:
                 // a malformed accelerator is logged + skipped, never fatal (the bar
                 // is still focusable via the tray and re-registered on next change).
-                if let Err(e) = register_hotkeys(app.handle(), &s.hotkey.summon, &s.hotkey.note) {
+                if let Err(e) = register_hotkeys(
+                    app.handle(),
+                    &s.hotkey.summon,
+                    &s.hotkey.note,
+                    &s.hotkey.note_create,
+                    &s.hotkey.note_destroy,
+                ) {
                     eprintln!("[bugzia] register hotkeys: {e}");
                 }
                 if s.agent_notify.enabled {
@@ -782,11 +850,21 @@ pub fn run() {
             reload_hotkeys,
             hotkey_center_scan,
             hotkey_center_detect_conflicts,
+            hotkey_center_hide_entry,
+            hotkey_center_hidden_list,
+            hotkey_center_unhide_entry,
+            manual_hotkey_entries_list,
+            manual_hotkey_entry_add,
+            manual_hotkey_entry_update,
+            manual_hotkey_entry_remove,
             shortcut_hotkeys_scan,
             shortcut_hotkey_set,
             shortcut_hotkey_clear,
             shortcut_hotkey_restore,
             shortcut_hotkey_reveal,
+            shortcut_hotkey_hide,
+            shortcut_hotkey_hidden_list,
+            shortcut_hotkey_unhide,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
