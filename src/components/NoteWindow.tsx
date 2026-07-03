@@ -5,6 +5,7 @@ import { applyNoteVars } from "../features/appearance/appearance";
 import { DEFAULT_NOTE, type NoteSettings } from "../features/settings/settingsTypes";
 import {
   NOTE_CHANGED,
+  NOTE_DESTROY_CONFIRM,
   NOTE_DESTROYED,
   NOTE_HYDRATE,
   NOTE_PINNED,
@@ -27,9 +28,12 @@ export default function NoteWindow() {
   const [pinned, setPinned] = useState(false);
   const [editing, setEditing] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [confirmingDestroy, setConfirmingDestroy] = useState(false);
   const [settings, setSettings] = useState<NoteSettings>(DEFAULT_NOTE);
   const draftRef = useRef("");
   const taRef = useRef<HTMLTextAreaElement | null>(null);
+  const confirmRef = useRef<HTMLDivElement | null>(null);
+  const destroySentRef = useRef(false);
 
   // Announce ourselves on mount so main hydrates us (mirrors result:ready).
   useEffect(() => {
@@ -73,6 +77,12 @@ export default function NoteWindow() {
         }),
       );
       offs.push(
+        await listen<{ id: string }>(NOTE_DESTROY_CONFIRM, (ev) => {
+          if (!alive || ev.payload.id !== id) return;
+          requestDestroy();
+        }),
+      );
+      offs.push(
         await listen<NoteSettings>(NOTE_SETTINGS, (ev) => {
           if (!alive) return;
           setSettings(ev.payload);
@@ -93,6 +103,25 @@ export default function NoteWindow() {
       offs.forEach((off) => off());
     };
   }, []);
+
+  useEffect(() => {
+    if (!confirmingDestroy) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      const key = e.key.toLowerCase();
+      if (key === "y") {
+        e.preventDefault();
+        e.stopPropagation();
+        confirmDestroy();
+      } else if (key === "n") {
+        e.preventDefault();
+        e.stopPropagation();
+        cancelDestroy();
+      }
+    };
+    requestAnimationFrame(() => confirmRef.current?.focus());
+    document.addEventListener("keydown", onKeyDown, true);
+    return () => document.removeEventListener("keydown", onKeyDown, true);
+  }, [confirmingDestroy]);
 
   function focusTextarea(selection: "start" | "end") {
     requestAnimationFrame(() => {
@@ -151,10 +180,22 @@ export default function NoteWindow() {
     }
   }
 
-  function destroy() {
+  function requestDestroy() {
+    commitEdit();
+    setConfirmingDestroy(true);
+    void getCurrentWindow().setFocus().catch(() => {});
+  }
+
+  function confirmDestroy() {
+    if (destroySentRef.current) return;
+    destroySentRef.current = true;
     void emit(NOTE_DESTROYED, { id }).finally(() => {
       getCurrentWindow().close().catch((e) => console.error("[bugzia] close note", e));
     });
+  }
+
+  function cancelDestroy() {
+    setConfirmingDestroy(false);
   }
 
   // Header drag: start a native move on pointerdown, but let the buttons work by
@@ -204,7 +245,7 @@ export default function NoteWindow() {
             className="note-btn destroy"
             title="销毁便笺"
             onPointerDown={(e) => e.stopPropagation()}
-            onClick={destroy}
+            onClick={requestDestroy}
           >
             销毁
           </button>
@@ -243,6 +284,59 @@ export default function NoteWindow() {
           <div className="note-text">{content || "点击编辑…"}</div>
         )}
       </div>
+
+      {confirmingDestroy && (
+        <div
+          ref={confirmRef}
+          className="note-confirm"
+          role="dialog"
+          aria-modal="true"
+          aria-label="确认删除便笺"
+          tabIndex={-1}
+          onPointerDown={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+          }}
+        >
+          <div className="note-confirm-panel">
+            <div className="note-confirm-title">真的要删除吗？</div>
+            <div className="note-confirm-actions">
+              <button
+                type="button"
+                className="note-confirm-btn yes"
+                onPointerDown={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  confirmDestroy();
+                }}
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  confirmDestroy();
+                }}
+              >
+                Y
+              </button>
+              <button
+                type="button"
+                className="note-confirm-btn no"
+                onPointerDown={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  cancelDestroy();
+                }}
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  cancelDestroy();
+                }}
+              >
+                N
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

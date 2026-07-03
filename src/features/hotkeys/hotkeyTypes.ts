@@ -3,7 +3,13 @@
 // Rust 的 snake_case。下面的联合类型与字段名必须与后端 serde 键逐字一致。
 // 不含 NormalizedAccelerator：后端已预计算 display 字符串，前端不解析。
 
-export type HotkeySourceType = "Bugzia" | "WindowsSystem" | "ShortcutLink" | "Manual";
+export type HotkeySourceType =
+  | "Bugzia"
+  | "WindowsSystem"
+  | "ShortcutLink"
+  | "Manual"
+  | "AppConfig"
+  | "AppBuiltin";
 export type HotkeyScope = "Global" | "AppLocal" | "WindowLocal" | "Unknown";
 export type ManageLevel =
   | "DirectModify"

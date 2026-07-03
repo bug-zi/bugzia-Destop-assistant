@@ -4,10 +4,12 @@
 //!   - Bugzia 自身快捷键（来自 settings.json）
 //!   - Windows 系统快捷键只读目录
 //!   - 手动登记的应用快捷键
+//!   - 可写回的应用配置快捷键
+//!   - 应用内置默认快捷键只读目录
 //!   - Windows .lnk 快捷方式热键（由 `shortcut_hotkeys` 模块扫描）
 //!
-//! 统一的扁平 `HotkeyEntry` 模型面向「总览」表格，未来加 AppConfig /
-//! ProbedOccupied / BlockRule 等 source_type 即可扩展，无需重构（附录 G 的
+//! 统一的扁平 `HotkeyEntry` 模型面向「总览」表格，未来加 ProbedOccupied /
+//! BlockRule 等 source_type 即可扩展，无需重构（附录 G 的
 //! 「为终局架构留接口」要求）。
 
 use serde::{Deserialize, Serialize};
@@ -89,10 +91,16 @@ pub fn parse_accel(s: &str) -> Option<NormalizedAccelerator> {
             continue;
         }
         match t.as_str() {
-            "ctrl" | "control" => ctrl = true,
-            "alt" | "opt" | "option" => alt = true,
-            "shift" => shift = true,
-            "win" | "super" | "meta" => win = true,
+            "ctrl" | "control" | "leftctrl" | "rightctrl" | "leftcontrol" | "rightcontrol" => {
+                ctrl = true
+            }
+            "alt" | "opt" | "option" | "leftalt" | "rightalt" | "leftoption" | "rightoption" => {
+                alt = true
+            }
+            "shift" | "leftshift" | "rightshift" => shift = true,
+            "win" | "super" | "meta" | "leftwin" | "rightwin" | "leftmeta" | "rightmeta" => {
+                win = true
+            }
             "space" | "spacebar" => {
                 if key.is_some() {
                     return None;
@@ -230,7 +238,9 @@ pub enum HotkeySourceType {
     WindowsSystem,
     ShortcutLink,
     Manual,
-    // 预留：AppConfig, ProbedOccupied, BlockRule
+    AppConfig,
+    AppBuiltin,
+    // 预留：ProbedOccupied, BlockRule
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug)]
@@ -1646,6 +1656,616 @@ fn windows_system_entries() -> Vec<HotkeyEntry> {
     entries
 }
 
+fn app_builtin_entry(
+    id: &str,
+    app_name: &str,
+    process_name: &str,
+    display: &str,
+    title: &str,
+    scope: HotkeyScope,
+    source_path: Option<String>,
+    note: &str,
+) -> HotkeyEntry {
+    HotkeyEntry {
+        id: id.to_string(),
+        display: display.to_string(),
+        title: title.to_string(),
+        app_name: app_name.to_string(),
+        process_name: Some(process_name.to_string()),
+        window_title_match: None,
+        source_type: HotkeySourceType::AppBuiltin,
+        scope,
+        manage_level: ManageLevel::ReadOnly,
+        source_path,
+        target: Some(note.to_string()),
+        can_modify: false,
+        backup_available: false,
+        conflict: ConflictInfo::default(),
+    }
+}
+
+fn first_existing_path(candidates: &[&str]) -> Option<String> {
+    candidates
+        .iter()
+        .map(Path::new)
+        .find(|path| path.exists())
+        .map(|path| path.to_string_lossy().to_string())
+}
+
+fn env_path(var: &str, suffix: &str) -> Option<PathBuf> {
+    std::env::var_os(var).map(|base| PathBuf::from(base).join(suffix))
+}
+
+fn read_json_value(path: &Path) -> Option<serde_json::Value> {
+    fs::read_to_string(path)
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+}
+
+fn json_pointer_string(value: &serde_json::Value, pointer: &str) -> Option<String> {
+    value
+        .pointer(pointer)
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .map(str::to_string)
+}
+
+fn app_config_entry(
+    id: &str,
+    app_name: &str,
+    process_name: &str,
+    display: &str,
+    title: &str,
+    scope: HotkeyScope,
+    source_path: &Path,
+    can_modify: bool,
+    note: &str,
+) -> HotkeyEntry {
+    HotkeyEntry {
+        id: id.to_string(),
+        display: display.trim().to_string(),
+        title: title.to_string(),
+        app_name: app_name.to_string(),
+        process_name: Some(process_name.to_string()),
+        window_title_match: None,
+        source_type: HotkeySourceType::AppConfig,
+        scope,
+        manage_level: if can_modify {
+            ManageLevel::AdapterModify
+        } else {
+            ManageLevel::ReadOnly
+        },
+        source_path: Some(source_path.to_string_lossy().to_string()),
+        target: Some(note.to_string()),
+        can_modify,
+        backup_available: false,
+        conflict: ConflictInfo::default(),
+    }
+}
+
+fn raw_config_entry(
+    id: &str,
+    app_name: &str,
+    process_name: &str,
+    raw_value: &str,
+    title: &str,
+    source_path: &Path,
+    note: &str,
+) -> HotkeyEntry {
+    app_config_entry(
+        id,
+        app_name,
+        process_name,
+        &format!("编码值 {}", raw_value.trim()),
+        title,
+        HotkeyScope::Global,
+        source_path,
+        false,
+        note,
+    )
+}
+
+fn typeless_config_entries() -> Vec<HotkeyEntry> {
+    let Some(path) = env_path("APPDATA", r"Typeless.exe\app-settings.json") else {
+        return Vec::new();
+    };
+    let Some(value) = read_json_value(&path) else {
+        return Vec::new();
+    };
+    let fields = [
+        (
+            "app_config.typeless.push_to_talk",
+            "/keyboardShortcut/pushToTalk",
+            "按住说话",
+            HotkeyScope::Global,
+        ),
+        (
+            "app_config.typeless.handles_free_mode",
+            "/keyboardShortcut/handlesFreeMode",
+            "自由模式",
+            HotkeyScope::Global,
+        ),
+        (
+            "app_config.typeless.paste_last_transcript",
+            "/keyboardShortcut/pasteLastTranscript",
+            "粘贴上一条转写",
+            HotkeyScope::Global,
+        ),
+        (
+            "app_config.typeless.translation_mode",
+            "/keyboardShortcut/translationMode",
+            "翻译模式",
+            HotkeyScope::Global,
+        ),
+    ];
+    fields
+        .into_iter()
+        .filter_map(|(id, pointer, title, scope)| {
+            let display = json_pointer_string(&value, pointer)?;
+            Some(app_config_entry(
+                id,
+                "Typeless",
+                "Typeless.exe",
+                &display,
+                title,
+                scope,
+                &path,
+                true,
+                "Typeless 用户配置 app-settings.json，可由 Bugzia 写回对应 keyboardShortcut 字段。",
+            ))
+        })
+        .collect()
+}
+
+fn pixpin_config_entries() -> Vec<HotkeyEntry> {
+    let Some(path) = env_path("LOCALAPPDATA", r"PixPin\Config\PixPinConfig.json") else {
+        return Vec::new();
+    };
+    let Some(value) = read_json_value(&path) else {
+        return Vec::new();
+    };
+    let specs = [
+        (
+            "app_config.pixpin.screenshot",
+            "/Action.Screenshot#s.win/v/shortCut",
+            "截图",
+        ),
+        (
+            "app_config.pixpin.pin",
+            "/Action.Pin#s.win/v/shortCut",
+            "贴图",
+        ),
+        (
+            "app_config.pixpin.bi_shortcut_4",
+            "/BIShortcut.pixpin.4#s.win/v",
+            "保存当前截图",
+        ),
+    ];
+    specs
+        .into_iter()
+        .filter_map(|(id, pointer, title)| {
+            let display = json_pointer_string(&value, pointer)?;
+            Some(app_config_entry(
+                id,
+                "PixPin",
+                "PixPin.exe",
+                &display,
+                title,
+                HotkeyScope::Global,
+                &path,
+                true,
+                "PixPin 用户配置 PixPinConfig.json，可写回对应动作 shortCut 字段。",
+            ))
+        })
+        .collect()
+}
+
+fn bongocat_config_entries() -> Vec<HotkeyEntry> {
+    let Some(path) = env_path(
+        "APPDATA",
+        r"com.ayangweb.BongoCat\tauri-plugin-pinia\shortcut.json",
+    ) else {
+        return Vec::new();
+    };
+    let Some(value) = read_json_value(&path) else {
+        return Vec::new();
+    };
+    let fields = [
+        (
+            "app_config.bongocat.visible_cat",
+            "visibleCat",
+            "显示/隐藏猫",
+        ),
+        ("app_config.bongocat.penetrable", "penetrable", "鼠标穿透"),
+        ("app_config.bongocat.mirror_mode", "mirrorMode", "镜像模式"),
+        (
+            "app_config.bongocat.visible_preference",
+            "visiblePreference",
+            "显示偏好设置",
+        ),
+        ("app_config.bongocat.always_on_top", "alwaysOnTop", "置顶"),
+    ];
+    fields
+        .into_iter()
+        .filter_map(|(id, key, title)| {
+            let display = value
+                .get(key)
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .trim()
+                .to_string();
+            Some(app_config_entry(
+                id,
+                "BongoCat",
+                "bongo-cat.exe",
+                &display,
+                title,
+                HotkeyScope::Global,
+                &path,
+                true,
+                "BongoCat 快捷键配置 shortcut.json，可写回对应字段；空值表示未设置。",
+            ))
+        })
+        .collect()
+}
+
+fn read_ini_value(path: &Path, wanted_key: &str) -> Option<String> {
+    let text = fs::read_to_string(path).ok()?;
+    for line in text.lines() {
+        let Some((key, value)) = line.split_once('=') else {
+            continue;
+        };
+        if key.trim().eq_ignore_ascii_case(wanted_key) {
+            return Some(value.trim().trim_matches('"').to_string());
+        }
+    }
+    None
+}
+
+fn kugou_config_entries() -> Vec<HotkeyEntry> {
+    let Some(path) = env_path("APPDATA", r"KuGou8\KuGou.ini") else {
+        return Vec::new();
+    };
+    if !path.exists() {
+        return Vec::new();
+    }
+    let note = "酷狗把热键存成数值编码；当前只读展示原始值，后续需要专项解码后才能安全写回。";
+    [
+        (
+            "app_config.kugou.lyric_global",
+            "LyricWinGlobalHotKey",
+            "桌面歌词全局热键（待解码）",
+        ),
+        (
+            "app_config.kugou.lyric_window",
+            "LyricWinHotKey",
+            "桌面歌词窗口热键（待解码）",
+        ),
+    ]
+    .into_iter()
+    .filter_map(|(id, key, title)| {
+        let raw = read_ini_value(&path, key)?;
+        if raw.is_empty() || raw == "0" {
+            return None;
+        }
+        Some(raw_config_entry(
+            id,
+            "酷狗音乐",
+            "KuGou.exe",
+            &raw,
+            title,
+            &path,
+            note,
+        ))
+    })
+    .collect()
+}
+
+#[cfg(target_os = "windows")]
+fn winstep_config_entries() -> Vec<HotkeyEntry> {
+    let script = concat!(
+        "[Console]::OutputEncoding=[System.Text.Encoding]::UTF8; ",
+        "$k=Get-ItemProperty -LiteralPath 'HKCU:\\Software\\WinSTEP2000\\NeXuS\\Docks' ",
+        "-ErrorAction SilentlyContinue; ",
+        "if($k){$k.PSObject.Properties | ",
+        "Where-Object { $_.Name -match '^1(Hotkey|Label|Path)\\d+$' } | ",
+        "ForEach-Object { \"$($_.Name)`t$($_.Value)\" }}"
+    );
+    let output = std::process::Command::new("powershell")
+        .args(["-NoProfile", "-Command", script])
+        .output();
+    let Ok(output) = output else {
+        return Vec::new();
+    };
+    if !output.status.success() {
+        return Vec::new();
+    }
+    let text = String::from_utf8_lossy(&output.stdout);
+    let mut labels: HashMap<String, String> = HashMap::new();
+    let mut paths: HashMap<String, String> = HashMap::new();
+    let mut hotkeys: HashMap<String, String> = HashMap::new();
+    for line in text.lines() {
+        let Some((name, value)) = line.split_once('\t') else {
+            continue;
+        };
+        let name = name.trim();
+        let value = value.trim().to_string();
+        if let Some(idx) = name.strip_prefix("1Label") {
+            labels.insert(idx.to_string(), value);
+        } else if let Some(idx) = name.strip_prefix("1Path") {
+            paths.insert(idx.to_string(), value);
+        } else if let Some(idx) = name.strip_prefix("1Hotkey") {
+            hotkeys.insert(idx.to_string(), value);
+        }
+    }
+    let source_path = PathBuf::from(r"HKCU\Software\WinSTEP2000\NeXuS\Docks");
+    let mut out = Vec::new();
+    for (idx, raw) in hotkeys {
+        let raw = raw.trim();
+        if raw.is_empty() || raw == "0" || raw.eq_ignore_ascii_case("0x0") {
+            continue;
+        }
+        let raw_display = raw
+            .strip_prefix("0x")
+            .and_then(|hex| u32::from_str_radix(hex, 16).ok())
+            .map(|n| n.to_string())
+            .unwrap_or_else(|| raw.to_string());
+        let label = labels
+            .get(&idx)
+            .cloned()
+            .unwrap_or_else(|| format!("Dock 项目 {idx}"));
+        let note = paths
+            .get(&idx)
+            .map(|p| format!("Winstep/Nexus Dock 热键存于注册表，当前只读展示原始值；目标：{p}"))
+            .unwrap_or_else(|| "Winstep/Nexus Dock 热键存于注册表，当前只读展示原始值。".into());
+        out.push(raw_config_entry(
+            &format!("app_config.winstep.dock_{idx}"),
+            "Winstep Nexus",
+            "Nexus.exe",
+            &raw_display,
+            &format!("Dock 项目快捷键：{label}"),
+            &source_path,
+            &note,
+        ));
+    }
+    out.sort_by(|a, b| a.title.cmp(&b.title));
+    out
+}
+
+#[cfg(not(target_os = "windows"))]
+fn winstep_config_entries() -> Vec<HotkeyEntry> {
+    Vec::new()
+}
+
+fn app_config_entries() -> Vec<HotkeyEntry> {
+    let mut entries = Vec::new();
+    entries.extend(typeless_config_entries());
+    entries.extend(pixpin_config_entries());
+    entries.extend(bongocat_config_entries());
+    entries.extend(kugou_config_entries());
+    entries.extend(winstep_config_entries());
+    entries
+}
+
+fn app_builtin_entries() -> Vec<HotkeyEntry> {
+    let mut entries = Vec::new();
+    let pogget_path = first_existing_path(&[r"D:\app\工具箱\Pogget文件收纳管理\Pogget.exe"]);
+    if pogget_path.is_some() || process_name_exists("Pogget.exe") {
+        let note = "Pogget.exe 内置默认全局热键；当前未发现可安全写回的外部配置。";
+        entries.push(app_builtin_entry(
+            "app_builtin.pogget.quick_panel",
+            "Pogget",
+            "Pogget.exe",
+            "Ctrl+Shift+K",
+            "启动快速面板",
+            HotkeyScope::Global,
+            pogget_path.clone(),
+            note,
+        ));
+        entries.push(app_builtin_entry(
+            "app_builtin.pogget.toggle_quick_panel",
+            "Pogget",
+            "Pogget.exe",
+            "Ctrl+Shift+L",
+            "启动/关闭快速面板",
+            HotkeyScope::Global,
+            pogget_path,
+            note,
+        ));
+    }
+    let dingtalk_path = first_existing_path(&[
+        r"D:\app\钉钉\DingDing\main\current\DingTalk.exe",
+        r"D:\app\钉钉\DingDing\main\current_new\DingTalk.exe",
+    ]);
+    if dingtalk_path.is_some() || process_name_exists("DingTalk.exe") {
+        let note = "从钉钉本地资源文案提取的应用内置快捷键目录；当前未定位到可安全写回的用户配置。";
+        entries.push(app_builtin_entry(
+            "app_builtin.dingtalk.personal_switch",
+            "钉钉",
+            "DingTalk.exe",
+            "Ctrl+Shift+1",
+            "切换个人空间 / 标准版",
+            HotkeyScope::AppLocal,
+            dingtalk_path.clone(),
+            note,
+        ));
+        for number in 1..=9 {
+            entries.push(app_builtin_entry(
+                &format!("app_builtin.dingtalk.nav_{number}"),
+                "钉钉",
+                "DingTalk.exe",
+                &format!("Ctrl+{number}"),
+                &format!("主导航栏切换 {number}"),
+                HotkeyScope::AppLocal,
+                dingtalk_path.clone(),
+                note,
+            ));
+        }
+        for (id, display, title) in [
+            (
+                "app_builtin.dingtalk.message_ctrl_enter",
+                "Ctrl+Enter",
+                "发送消息 / 换行选项",
+            ),
+            ("app_builtin.dingtalk.message_alt_s", "Alt+S", "发送消息"),
+            (
+                "app_builtin.dingtalk.streamline_refresh",
+                "Ctrl+R",
+                "收起无消息或已读会话",
+            ),
+            (
+                "app_builtin.dingtalk.remote_stop",
+                "Shift+Esc",
+                "停止远程协助受控",
+            ),
+            ("app_builtin.dingtalk.snip_undo", "Ctrl+Z", "截图工具撤销"),
+            ("app_builtin.dingtalk.snip_redo", "Ctrl+Y", "截图工具重做"),
+            ("app_builtin.dingtalk.rich_bold", "Ctrl+B", "富文本加粗"),
+            ("app_builtin.dingtalk.rich_italic", "Ctrl+I", "富文本斜体"),
+            ("app_builtin.dingtalk.rich_link", "Ctrl+K", "富文本链接"),
+            (
+                "app_builtin.dingtalk.rich_inline_code",
+                "Ctrl+E",
+                "富文本行内代码",
+            ),
+            (
+                "app_builtin.dingtalk.rich_strike",
+                "Ctrl+Shift+X",
+                "富文本删除线",
+            ),
+            (
+                "app_builtin.dingtalk.rich_ulist",
+                "Ctrl+Shift+7",
+                "富文本无序列表",
+            ),
+            (
+                "app_builtin.dingtalk.rich_olist",
+                "Ctrl+Shift+8",
+                "富文本有序列表",
+            ),
+            (
+                "app_builtin.dingtalk.voice_dictation",
+                "Ctrl+Alt",
+                "语音听写",
+            ),
+        ] {
+            entries.push(app_builtin_entry(
+                id,
+                "钉钉",
+                "DingTalk.exe",
+                display,
+                title,
+                HotkeyScope::AppLocal,
+                dingtalk_path.clone(),
+                note,
+            ));
+        }
+    }
+
+    let copytranslator_path = first_existing_path(&[
+        r"D:\app\工具箱\翻译软件\copytranslator\copytranslator.exe",
+        r"D:\app\工具箱\翻译软件\copytranslator\CopyTranslator.exe",
+    ]);
+    if copytranslator_path.is_some() || process_name_exists("copytranslator.exe") {
+        let note = "从 CopyTranslator 本地资源文案提取的内置快捷键/按键行为；当前未定位到可安全写回的用户配置。";
+        for (id, display, title) in [
+            (
+                "app_builtin.copytranslator.double_copy",
+                "Ctrl+C",
+                "双击复制触发翻译",
+            ),
+            (
+                "app_builtin.copytranslator.translate_input",
+                "Ctrl+Enter",
+                "翻译输入框内容",
+            ),
+            (
+                "app_builtin.copytranslator.auto_paste",
+                "Ctrl+V",
+                "翻译后模拟粘贴",
+            ),
+        ] {
+            entries.push(app_builtin_entry(
+                id,
+                "CopyTranslator",
+                "copytranslator.exe",
+                display,
+                title,
+                HotkeyScope::AppLocal,
+                copytranslator_path.clone(),
+                note,
+            ));
+        }
+    }
+
+    let everything_path = first_existing_path(&[
+        r"D:\app\工具箱\everything\Everything.exe",
+        r"C:\Program Files\Everything\Everything.exe",
+    ]);
+    if everything_path.is_some() || process_name_exists("Everything.exe") {
+        let note = "从 Everything.exe 字符串扫描到的应用内快捷键目录；Everything.ini 当前未设置额外全局热键。";
+        for (id, display, title) in [
+            (
+                "app_builtin.everything.alt_down",
+                "Alt+Down",
+                "展开搜索历史或候选",
+            ),
+            (
+                "app_builtin.everything.alt_up",
+                "Alt+Up",
+                "收起搜索历史或候选",
+            ),
+            ("app_builtin.everything.select_all", "Ctrl+A", "全选"),
+            ("app_builtin.everything.copy", "Ctrl+C", "复制"),
+            ("app_builtin.everything.focus_search", "Ctrl+E", "聚焦搜索"),
+            ("app_builtin.everything.open", "Ctrl+Enter", "打开结果"),
+            ("app_builtin.everything.help", "Ctrl+F1", "帮助"),
+            ("app_builtin.everything.new_window", "Ctrl+N", "新建窗口"),
+            ("app_builtin.everything.open_file", "Ctrl+O", "打开"),
+            ("app_builtin.everything.save", "Ctrl+S", "保存"),
+            (
+                "app_builtin.everything.toggle_search",
+                "Ctrl+Space",
+                "切换搜索相关状态",
+            ),
+            ("app_builtin.everything.paste", "Ctrl+V", "粘贴"),
+            ("app_builtin.everything.close", "Ctrl+W", "关闭窗口"),
+            ("app_builtin.everything.cut", "Ctrl+X", "剪切"),
+            (
+                "app_builtin.everything.open_shift",
+                "Shift+Enter",
+                "打开结果的替代动作",
+            ),
+        ] {
+            entries.push(app_builtin_entry(
+                id,
+                "Everything",
+                "Everything.exe",
+                display,
+                title,
+                HotkeyScope::AppLocal,
+                everything_path.clone(),
+                note,
+            ));
+        }
+    }
+
+    let peek_path = first_existing_path(&[r"D:\app\工具箱\Peek-桌面文件隐藏\PeekDesktop.exe"]);
+    if peek_path.is_some() || process_name_exists("PeekDesktop.exe") {
+        entries.push(app_builtin_entry(
+            "app_builtin.peekdesktop.win_d",
+            "PeekDesktop",
+            "PeekDesktop.exe",
+            "Win+D",
+            "响应显示桌面",
+            HotkeyScope::Global,
+            peek_path,
+            "从 PeekDesktop.exe 字符串扫描到的全局快捷键行为；当前未定位到可安全写回的用户配置。",
+        ));
+    }
+    entries
+}
+
 fn manual_hotkeys_path(app: &AppHandle) -> Result<PathBuf, String> {
     let dir = app
         .path()
@@ -1758,7 +2378,10 @@ fn save_observed_hotkeys(app: &AppHandle, entries: &[ObservedHotkeyEntry]) -> Re
 fn can_hide_center_entry(entry: &HotkeyEntry) -> bool {
     matches!(
         entry.source_type,
-        HotkeySourceType::WindowsSystem | HotkeySourceType::Manual
+        HotkeySourceType::WindowsSystem
+            | HotkeySourceType::Manual
+            | HotkeySourceType::AppConfig
+            | HotkeySourceType::AppBuiltin
     )
 }
 
@@ -1830,6 +2453,136 @@ fn app_name_from_process(process_name: &str) -> String {
         .to_string()
 }
 
+fn compact_accel(raw: &str) -> String {
+    raw.split('+')
+        .map(str::trim)
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>()
+        .join("+")
+}
+
+fn is_modifier_token(token: &str) -> bool {
+    matches!(
+        token.trim().to_lowercase().as_str(),
+        "ctrl"
+            | "control"
+            | "leftctrl"
+            | "rightctrl"
+            | "leftcontrol"
+            | "rightcontrol"
+            | "alt"
+            | "opt"
+            | "option"
+            | "leftalt"
+            | "rightalt"
+            | "leftoption"
+            | "rightoption"
+            | "shift"
+            | "leftshift"
+            | "rightshift"
+            | "win"
+            | "super"
+            | "meta"
+            | "leftwin"
+            | "rightwin"
+            | "leftmeta"
+            | "rightmeta"
+    )
+}
+
+fn is_modifier_only_accel(raw: &str) -> bool {
+    let parts: Vec<&str> = raw
+        .split('+')
+        .map(str::trim)
+        .filter(|part| !part.is_empty())
+        .collect();
+    !parts.is_empty() && parts.iter().all(|part| is_modifier_token(part))
+}
+
+fn validate_app_config_accel(raw: &str) -> Result<String, String> {
+    let compact = compact_accel(raw);
+    if compact.is_empty() {
+        return Ok(String::new());
+    }
+    if parse_accel(&compact).is_some() || is_modifier_only_accel(&compact) {
+        return Ok(compact);
+    }
+    Err("请输入有效快捷键，如 Ctrl+Alt+K；清空则表示未设置".into())
+}
+
+fn app_config_pointer_for_id(id: &str) -> Result<(PathBuf, &'static str), String> {
+    match id {
+        "app_config.typeless.push_to_talk" => {
+            env_path("APPDATA", r"Typeless.exe\app-settings.json")
+                .map(|path| (path, "/keyboardShortcut/pushToTalk"))
+        }
+        "app_config.typeless.handles_free_mode" => {
+            env_path("APPDATA", r"Typeless.exe\app-settings.json")
+                .map(|path| (path, "/keyboardShortcut/handlesFreeMode"))
+        }
+        "app_config.typeless.paste_last_transcript" => {
+            env_path("APPDATA", r"Typeless.exe\app-settings.json")
+                .map(|path| (path, "/keyboardShortcut/pasteLastTranscript"))
+        }
+        "app_config.typeless.translation_mode" => {
+            env_path("APPDATA", r"Typeless.exe\app-settings.json")
+                .map(|path| (path, "/keyboardShortcut/translationMode"))
+        }
+        "app_config.pixpin.screenshot" => {
+            env_path("LOCALAPPDATA", r"PixPin\Config\PixPinConfig.json")
+                .map(|path| (path, "/Action.Screenshot#s.win/v/shortCut"))
+        }
+        "app_config.pixpin.pin" => env_path("LOCALAPPDATA", r"PixPin\Config\PixPinConfig.json")
+            .map(|path| (path, "/Action.Pin#s.win/v/shortCut")),
+        "app_config.pixpin.bi_shortcut_4" => {
+            env_path("LOCALAPPDATA", r"PixPin\Config\PixPinConfig.json")
+                .map(|path| (path, "/BIShortcut.pixpin.4#s.win/v"))
+        }
+        "app_config.bongocat.visible_cat" => env_path(
+            "APPDATA",
+            r"com.ayangweb.BongoCat\tauri-plugin-pinia\shortcut.json",
+        )
+        .map(|path| (path, "/visibleCat")),
+        "app_config.bongocat.penetrable" => env_path(
+            "APPDATA",
+            r"com.ayangweb.BongoCat\tauri-plugin-pinia\shortcut.json",
+        )
+        .map(|path| (path, "/penetrable")),
+        "app_config.bongocat.mirror_mode" => env_path(
+            "APPDATA",
+            r"com.ayangweb.BongoCat\tauri-plugin-pinia\shortcut.json",
+        )
+        .map(|path| (path, "/mirrorMode")),
+        "app_config.bongocat.visible_preference" => env_path(
+            "APPDATA",
+            r"com.ayangweb.BongoCat\tauri-plugin-pinia\shortcut.json",
+        )
+        .map(|path| (path, "/visiblePreference")),
+        "app_config.bongocat.always_on_top" => env_path(
+            "APPDATA",
+            r"com.ayangweb.BongoCat\tauri-plugin-pinia\shortcut.json",
+        )
+        .map(|path| (path, "/alwaysOnTop")),
+        _ => None,
+    }
+    .ok_or_else(|| "未找到这条应用配置快捷键".to_string())
+}
+
+fn set_json_pointer_string(
+    value: &mut serde_json::Value,
+    pointer: &str,
+    accelerator: String,
+) -> Result<(), String> {
+    let Some(slot) = value.pointer_mut(pointer) else {
+        return Err("配置字段不存在，已取消写入".into());
+    };
+    if !slot.is_string() {
+        return Err("配置字段不是字符串，已取消写入".into());
+    }
+    *slot = serde_json::Value::String(accelerator);
+    Ok(())
+}
+
 fn validate_manual_input(input: ManualHotkeyInput) -> Result<ManualHotkeyInput, String> {
     let app_name = input.app_name.trim().to_string();
     let process_name = input.process_name.trim().to_string();
@@ -1843,14 +2596,19 @@ fn validate_manual_input(input: ManualHotkeyInput) -> Result<ManualHotkeyInput, 
     if title.is_empty() {
         return Err("请输入功能名称".into());
     }
-    let parsed = parse_accel(&accelerator)
-        .ok_or_else(|| "请输入有效快捷键，如 Ctrl+Alt+K 或 Win+Shift+S".to_string())?;
+    let accelerator = if accelerator.is_empty() {
+        String::new()
+    } else {
+        let parsed = parse_accel(&accelerator)
+            .ok_or_else(|| "请输入有效快捷键，如 Ctrl+Alt+K；清空则表示未设置".to_string())?;
+        format_accel(&parsed)
+    };
     Ok(ManualHotkeyInput {
         app_name,
         process_name,
         window_title_match,
         title,
-        accelerator: format_accel(&parsed),
+        accelerator,
         scope: input.scope,
         notes,
     })
@@ -1937,6 +2695,8 @@ fn build_entries_raw(app: &AppHandle) -> Result<Vec<HotkeyEntry>, String> {
     }
 
     out.extend(windows_system_entries());
+    out.extend(app_builtin_entries());
+    out.extend(app_config_entries());
 
     for item in load_manual_hotkeys(app) {
         out.push(manual_to_entry(item));
@@ -2386,6 +3146,32 @@ fn process_name_for_pid(pid: u32) -> Option<String> {
 }
 
 #[cfg(target_os = "windows")]
+fn process_name_exists(name: &str) -> bool {
+    let Ok(snapshot) = (unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) }) else {
+        return false;
+    };
+    let mut entry = PROCESSENTRY32W {
+        dwSize: size_of::<PROCESSENTRY32W>() as u32,
+        ..Default::default()
+    };
+    let mut ok = unsafe { Process32FirstW(snapshot, &mut entry).is_ok() };
+    while ok {
+        if wide_nul_to_string(&entry.szExeFile).eq_ignore_ascii_case(name) {
+            let _ = unsafe { CloseHandle(snapshot) };
+            return true;
+        }
+        ok = unsafe { Process32NextW(snapshot, &mut entry).is_ok() };
+    }
+    let _ = unsafe { CloseHandle(snapshot) };
+    false
+}
+
+#[cfg(not(target_os = "windows"))]
+fn process_name_exists(_name: &str) -> bool {
+    false
+}
+
+#[cfg(target_os = "windows")]
 fn wide_nul_to_string(buf: &[u16]) -> String {
     let end = buf.iter().position(|&c| c == 0).unwrap_or(buf.len());
     String::from_utf16_lossy(&buf[..end])
@@ -2572,6 +3358,17 @@ pub fn manual_hotkey_entry_remove(app: AppHandle, id: String) -> Result<bool, St
     let removed = entries.len() != before;
     save_manual_hotkeys(&app, &entries)?;
     Ok(removed)
+}
+
+#[tauri::command]
+pub fn app_config_hotkey_entry_update(id: String, accelerator: String) -> Result<bool, String> {
+    let accelerator = validate_app_config_accel(&accelerator)?;
+    let (path, pointer) = app_config_pointer_for_id(&id)?;
+    let mut value = read_json_value(&path).ok_or_else(|| "无法读取应用配置文件".to_string())?;
+    set_json_pointer_string(&mut value, pointer, accelerator)?;
+    let data = serde_json::to_string_pretty(&value).map_err(|e| format!("serialize: {e}"))?;
+    atomic_write_json(&path, &data)?;
+    Ok(true)
 }
 
 #[tauri::command]

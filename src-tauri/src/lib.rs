@@ -21,11 +21,11 @@ use conversations::{
 };
 use file_search::{open_file, reveal_file, search_files};
 use hotkey_center::{
-    hotkey_center_detect_conflicts, hotkey_center_hidden_list, hotkey_center_hide_entry,
-    hotkey_center_scan, hotkey_center_unhide_entry, hotkey_observer_set_enabled,
-    hotkey_observer_status, manual_hotkey_entries_list, manual_hotkey_entry_add,
-    manual_hotkey_entry_remove, manual_hotkey_entry_update, observed_hotkey_promote,
-    observed_hotkey_remove, observed_hotkeys_list, running_apps_list,
+    app_config_hotkey_entry_update, hotkey_center_detect_conflicts, hotkey_center_hidden_list,
+    hotkey_center_hide_entry, hotkey_center_scan, hotkey_center_unhide_entry,
+    hotkey_observer_set_enabled, hotkey_observer_status, manual_hotkey_entries_list,
+    manual_hotkey_entry_add, manual_hotkey_entry_remove, manual_hotkey_entry_update,
+    observed_hotkey_promote, observed_hotkey_remove, observed_hotkeys_list, running_apps_list,
 };
 use notes::{notes_load, notes_save};
 use recyclebin::pet_eat_files;
@@ -859,6 +859,7 @@ pub fn run() {
             manual_hotkey_entry_add,
             manual_hotkey_entry_update,
             manual_hotkey_entry_remove,
+            app_config_hotkey_entry_update,
             running_apps_list,
             hotkey_observer_set_enabled,
             hotkey_observer_status,

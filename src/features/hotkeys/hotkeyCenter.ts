@@ -97,6 +97,13 @@ export async function removeManualHotkeyEntry(id: string): Promise<boolean> {
   return await invoke<boolean>("manual_hotkey_entry_remove", { id });
 }
 
+export async function updateAppConfigHotkeyEntry(
+  id: string,
+  accelerator: string,
+): Promise<boolean> {
+  return await invoke<boolean>("app_config_hotkey_entry_update", { id, accelerator });
+}
+
 export async function hideHotkeyCenterEntry(entryId: string): Promise<boolean> {
   return await invoke<boolean>("hotkey_center_hide_entry", { entryId });
 }

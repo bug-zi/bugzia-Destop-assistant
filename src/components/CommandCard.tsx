@@ -39,6 +39,7 @@ import {
 import { notesLoad, notesSave } from "../features/note/notesStore";
 import {
   NOTE_CHANGED,
+  NOTE_DESTROY_CONFIRM,
   NOTE_DESTROY_CURRENT,
   NOTE_DESTROYED,
   NOTE_HYDRATE,
@@ -835,7 +836,7 @@ export default function CommandCard() {
         }),
       );
       // note_destroy 快捷键：后端只负责发触发事件，由主窗口（拥有全部便笺状态）
-      // 决定销毁哪张——当前便笺=最近新建/编辑的那张，否则回退到列表最后一张。
+      // 决定哪张需要确认销毁——当前便笺=最近新建/编辑的那张，否则回退到列表最后一张。
       offs.push(
         await listen(NOTE_DESTROY_CURRENT, () => {
           // [诊断] 这行能证明"按键→后端→事件→主窗口"整条链路通了。验证后可移除。
@@ -851,7 +852,7 @@ export default function CommandCard() {
           if (!target || !notes.some((n) => n.id === target)) {
             target = notes[notes.length - 1].id;
           }
-          destroyNoteById(target);
+          void requestDestroyNoteById(target).catch(logErr("request destroy note"));
         }),
       );
       // Spawn a fresh blank note. Backend emits this from toggle_notes (the
@@ -1172,14 +1173,21 @@ export default function CommandCard() {
     }
   }
 
-  /** Destroy one note by id: drop it from state, close its window, persist.
-   *  Shared by the note's own 销毁 button (NOTE_DESTROYED) and the note_destroy
-   *  hotkey (NOTE_DESTROY_CURRENT, after main picks the target id). */
+  /** Destroy one note by id after the note window has confirmed deletion. */
   function destroyNoteById(id: string) {
     notesRef.current = notesRef.current.filter((n) => n.id !== id);
     if (activeNoteIdRef.current === id) activeNoteIdRef.current = null;
     void closeNoteWindow(id).catch(logErr("close note"));
     scheduleNotesSave();
+  }
+
+  async function requestDestroyNoteById(id: string) {
+    const label = noteLabel(id);
+    const win = await WebviewWindow.getByLabel(label);
+    if (!win) return;
+    await win.show().catch(() => {});
+    await win.setFocus().catch(() => {});
+    await emitTo(label, NOTE_DESTROY_CONFIRM, { id });
   }
 
   /** Spawn a fresh (temporary) note at the cascaded lower-right spot. The window

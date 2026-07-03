@@ -676,6 +676,128 @@ textarea.f-input {
   margin-bottom: 10px;
 }
 
+.hk-app-browser {
+  display: grid;
+  grid-template-columns: 128px minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
+}
+
+.hk-app-nav {
+  position: sticky;
+  top: 0;
+  max-height: 360px;
+  overflow-y: auto;
+  border-right: 1px solid rgba(31, 36, 40, 0.1);
+  padding: 2px 8px 2px 0;
+}
+
+.hk-app-nav-title {
+  margin: 0 0 6px 2px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--bugzia-text-weak);
+}
+
+.hk-app-nav-item {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  border: none;
+  background: transparent;
+  border-radius: 7px;
+  padding: 5px 6px;
+  font-family: inherit;
+  font-size: 12px;
+  color: var(--bugzia-text);
+  cursor: pointer;
+}
+
+.hk-app-nav-item:hover {
+  background: rgba(31, 36, 40, 0.07);
+}
+
+.hk-app-nav-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hk-app-nav-count {
+  flex: 0 0 auto;
+  min-width: 18px;
+  color: var(--bugzia-text-weak);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.hk-app-content {
+  min-width: 0;
+}
+
+.hk-app-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  scroll-margin-top: 8px;
+}
+
+.hk-app-group + .hk-app-group {
+  margin-top: 8px;
+  padding-top: 10px;
+  border-top: 1px solid rgba(31, 36, 40, 0.1);
+}
+
+.hk-app-group-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 0 2px;
+}
+
+.hk-app-group-main {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.hk-app-group-actions {
+  flex: 0 0 auto;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  margin-top: 2px;
+}
+
+.hk-app-group-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--bugzia-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hk-app-group-meta {
+  margin-top: 2px;
+  font-size: 11px;
+  color: var(--bugzia-text-weak);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hk-app-group-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
 .hk-item {
   border: 1px solid rgba(31, 36, 40, 0.12);
   background: rgba(255, 255, 255, 0.6);

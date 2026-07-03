@@ -23,6 +23,7 @@ import {
   removeObservedHotkey,
   setHotkeyObserverEnabled,
   unhideHotkeyCenterEntry,
+  updateAppConfigHotkeyEntry,
   updateManualHotkeyEntry,
 } from "../features/hotkeys/hotkeyCenter";
 import {
@@ -43,13 +44,26 @@ import "./SettingsPanel.css";
  * - 快捷方式走独立的 .lnk COM 命令，绝不碰 settings.json。
  * - 总览由后端 detectHotkeyConflicts 预计算 display + 冲突状态，前端不解析。
  */
-type Tab = "overview" | "conflicts" | "bugzia" | "windows" | "manual" | "shortcut" | "hidden";
+type Tab =
+  | "overview"
+  | "conflicts"
+  | "bugzia"
+  | "windows"
+  | "manual"
+  | "shortcut"
+  | "supplement"
+  | "hidden";
 
 interface Props {
   hotkey: HotkeySettings;
   onPatchHotkey: (p: Partial<HotkeySettings>) => void;
   hkErr: string | null;
   setHkErr: (s: string | null) => void;
+}
+
+interface SupplementEditTarget {
+  entry: HotkeyEntry;
+  token: number;
 }
 
 const TABS: { key: Tab; label: string }[] = [
@@ -59,10 +73,15 @@ const TABS: { key: Tab; label: string }[] = [
   { key: "windows", label: "Windows" },
   { key: "manual", label: "应用" },
   { key: "shortcut", label: "快捷方式" },
+  { key: "supplement", label: "手动补充" },
   { key: "hidden", label: "已隐藏" },
 ];
 
 const isWindows = /win/i.test(navigator.userAgent);
+
+function isApplicationHotkeySource(source: HotkeySourceType): boolean {
+  return source === "Manual" || source === "AppConfig" || source === "AppBuiltin";
+}
 
 export default function HotkeyCenterPanel({ hotkey, onPatchHotkey, hkErr, setHkErr }: Props) {
   const [tab, setTab] = useState<Tab>("overview");
@@ -71,6 +90,7 @@ export default function HotkeyCenterPanel({ hotkey, onPatchHotkey, hkErr, setHkE
   const [shortcuts, setShortcuts] = useState<ShortcutHotkeyItem[]>([]);
   const [hiddenShortcuts, setHiddenShortcuts] = useState<ShortcutHotkeyItem[]>([]);
   const [shortcutsLoaded, setShortcutsLoaded] = useState(false);
+  const [supplementEditTarget, setSupplementEditTarget] = useState<SupplementEditTarget | null>(null);
   const [busy, setBusy] = useState(false);
 
   // 总览数据：挂载 + Bugzia 快捷键变化时刷新（后者让冲突徽标跟上输入框编辑）。
@@ -137,6 +157,11 @@ export default function HotkeyCenterPanel({ hotkey, onPatchHotkey, hkErr, setHkE
     return { total, conflicts, overrides, modifiable };
   }, [entries]);
 
+  function openSupplementEditor(entry: HotkeyEntry) {
+    setSupplementEditTarget({ entry, token: Date.now() + Math.random() });
+    setTab("supplement");
+  }
+
   return (
     <section className="settings-section hk-panel">
       <h4>快捷键中心</h4>
@@ -189,20 +214,11 @@ export default function HotkeyCenterPanel({ hotkey, onPatchHotkey, hkErr, setHkE
 
       {tab === "manual" && (
         <ManualTab
-          entries={entries.filter((e) => e.source_type === "Manual")}
-          allEntries={entries}
+          entries={entries.filter((e) => isApplicationHotkeySource(e.source_type))}
           busy={busy}
           setBusy={setBusy}
           onChange={refreshEntries}
-        />
-      )}
-
-      {tab === "hidden" && (
-        <HiddenTab
-          entries={hiddenEntries}
-          busy={busy}
-          setBusy={setBusy}
-          onChange={refreshEntries}
+          onEditEntry={openSupplementEditor}
         />
       )}
 
@@ -215,6 +231,25 @@ export default function HotkeyCenterPanel({ hotkey, onPatchHotkey, hkErr, setHkE
           busy={busy}
           setBusy={setBusy}
           onChange={refreshShortcuts}
+        />
+      )}
+
+      {tab === "supplement" && (
+        <SupplementTab
+          allEntries={entries}
+          editTarget={supplementEditTarget}
+          busy={busy}
+          setBusy={setBusy}
+          onChange={refreshEntries}
+        />
+      )}
+
+      {tab === "hidden" && (
+        <HiddenTab
+          entries={hiddenEntries}
+          busy={busy}
+          setBusy={setBusy}
+          onChange={refreshEntries}
         />
       )}
     </section>
@@ -454,8 +489,18 @@ function ConflictEntryRow({
           </button>
         )}
         {entry.source_type === "Manual" && (
-          <button className="key-btn" type="button" disabled={busy} onClick={() => onJump("manual")}>
+          <button className="key-btn" type="button" disabled={busy} onClick={() => onJump("supplement")}>
             编辑登记
+          </button>
+        )}
+        {entry.source_type === "AppConfig" && (
+          <button className="key-btn" type="button" disabled={busy} onClick={() => onJump("supplement")}>
+            编辑配置
+          </button>
+        )}
+        {entry.source_type === "AppBuiltin" && (
+          <button className="key-btn" type="button" disabled={busy} onClick={() => onJump("manual")}>
+            查看应用
           </button>
         )}
         {entry.source_type === "ShortcutLink" && (
@@ -479,7 +524,7 @@ function ConflictEntryRow({
 }
 
 function canCenterHide(entry: HotkeyEntry): boolean {
-  return entry.source_type === "WindowsSystem" || entry.source_type === "Manual";
+  return entry.source_type === "WindowsSystem" || isApplicationHotkeySource(entry.source_type);
 }
 
 function entryStateClass(entry: HotkeyEntry): string {
@@ -952,12 +997,56 @@ const EMPTY_MANUAL_INPUT: ManualHotkeyInput = {
   notes: "",
 };
 
+interface AppHotkeyGroup {
+  key: string;
+  appName: string;
+  processes: string[];
+  running: boolean;
+  modifiableCount: number;
+  enabledModifiableCount: number;
+  entries: HotkeyEntry[];
+}
+
 function runningAppKey(app: RunningAppInfo): string {
   return `${app.pid}:${app.process_name}:${app.window_title}`;
 }
 
 function appNameFromProcess(processName: string): string {
   return processName.replace(/\.exe$/i, "") || processName;
+}
+
+function applicationGroupName(entry: HotkeyEntry): string {
+  const appName = entry.app_name.trim();
+  if (appName) return appName;
+  const processName = entry.process_name?.trim();
+  return processName ? appNameFromProcess(processName) : "未命名应用";
+}
+
+function applicationGroupKey(entry: HotkeyEntry): string {
+  return applicationGroupName(entry).toLowerCase();
+}
+
+function applicationSourceOrder(source: HotkeySourceType): number {
+  switch (source) {
+    case "AppConfig":
+      return 0;
+    case "AppBuiltin":
+      return 1;
+    case "Manual":
+      return 2;
+    default:
+      return 3;
+  }
+}
+
+function formatGroupProcesses(processes: string[]): string {
+  if (processes.length === 0) return "未记录进程名";
+  if (processes.length <= 2) return processes.join(" / ");
+  return `${processes.slice(0, 2).join(" / ")} 等 ${processes.length} 个进程`;
+}
+
+function appGroupDomId(index: number): string {
+  return `hk-app-group-${index}`;
 }
 
 function isManualEntryRunning(
@@ -982,24 +1071,293 @@ function formatSeenTime(ms: number): string {
 
 function ManualTab({
   entries,
+  busy,
+  setBusy,
+  onChange,
+  onEditEntry,
+}: {
+  entries: HotkeyEntry[];
+  busy: boolean;
+  setBusy: (b: boolean) => void;
+  onChange: () => Promise<void>;
+  onEditEntry: (entry: HotkeyEntry) => void;
+}) {
+  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const [runningApps, setRunningApps] = useState<RunningAppInfo[]>([]);
+
+  useEffect(() => {
+    let alive = true;
+    async function refresh() {
+      const apps = await listRunningApps();
+      if (alive) {
+        setRunningApps(apps);
+      }
+    }
+    void refresh();
+    const timer = window.setInterval(() => void refresh(), 10000);
+    return () => {
+      alive = false;
+      window.clearInterval(timer);
+    };
+  }, []);
+
+  const runningProcessNames = useMemo(
+    () => new Set(runningApps.map((app) => app.process_name.trim().toLowerCase()).filter(Boolean)),
+    [runningApps],
+  );
+
+  const appGroups = useMemo(() => {
+    const groups = new Map<string, AppHotkeyGroup>();
+    for (const entry of entries) {
+      const key = applicationGroupKey(entry);
+      const processName = entry.process_name?.trim();
+      const existing = groups.get(key);
+      if (existing) {
+        existing.entries.push(entry);
+        if (processName && !existing.processes.includes(processName)) existing.processes.push(processName);
+      } else {
+        groups.set(key, {
+          key,
+          appName: applicationGroupName(entry),
+          processes: processName ? [processName] : [],
+          running: false,
+          modifiableCount: 0,
+          enabledModifiableCount: 0,
+          entries: [entry],
+        });
+      }
+    }
+    return [...groups.values()]
+      .map((group) => ({
+        ...group,
+        running: group.entries.some((entry) => isManualEntryRunning(entry, runningApps, runningProcessNames)),
+        modifiableCount: group.entries.filter((entry) => entry.can_modify).length,
+        enabledModifiableCount: group.entries.filter((entry) => entry.can_modify && entry.display).length,
+        entries: [...group.entries].sort(
+          (a, b) =>
+            applicationSourceOrder(a.source_type) - applicationSourceOrder(b.source_type) ||
+            a.title.localeCompare(b.title, "zh-Hans-CN") ||
+            a.display.localeCompare(b.display),
+        ),
+      }))
+      .sort(
+        (a, b) =>
+          Number(b.running) - Number(a.running) ||
+          a.appName.localeCompare(b.appName, "zh-Hans-CN"),
+      );
+  }, [entries, runningApps, runningProcessNames]);
+
+  function scrollToAppGroup(index: number) {
+    document
+      .getElementById(appGroupDomId(index))
+      ?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+
+  function manualInputFromEntry(entry: HotkeyEntry, accelerator: string): ManualHotkeyInput {
+    return {
+      app_name: entry.app_name,
+      process_name: entry.process_name ?? "",
+      window_title_match: entry.window_title_match ?? "",
+      title: entry.title,
+      accelerator,
+      scope: entry.scope,
+      notes: entry.target ?? "",
+    };
+  }
+
+  async function clearModifiableEntry(entry: HotkeyEntry) {
+    if (entry.source_type === "AppConfig") {
+      await updateAppConfigHotkeyEntry(entry.id, "");
+      return;
+    }
+    if (entry.source_type === "Manual") {
+      await updateManualHotkeyEntry(entry.id, manualInputFromEntry(entry, ""));
+      return;
+    }
+    throw new Error("这条快捷键没有可写回的禁用方式");
+  }
+
+  async function disableHotkey(entry: HotkeyEntry) {
+    if (!entry.can_modify || !entry.display) return;
+    if (!window.confirm(`确定禁用「${entry.app_name} / ${entry.title}」的快捷键？\n\n记录会保留，快捷键会清空为未设置。`)) return;
+    setBusy(true);
+    try {
+      await clearModifiableEntry(entry);
+      setMsg({ ok: true, text: `已禁用 ${entry.app_name} / ${entry.title}` });
+      await onChange();
+    } catch (err) {
+      setMsg({ ok: false, text: String(err) });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function disableAppGroup(group: AppHotkeyGroup) {
+    const targets = group.entries.filter((entry) => entry.can_modify && entry.display);
+    if (targets.length === 0) return;
+    if (!window.confirm(`确定禁用「${group.appName}」下 ${targets.length} 个可修改快捷键？\n\n只会清空可写回的快捷键；只读目录不会被修改。`)) return;
+    setBusy(true);
+    try {
+      for (const entry of targets) {
+        await clearModifiableEntry(entry);
+      }
+      setMsg({ ok: true, text: `已禁用 ${group.appName} 的 ${targets.length} 个可修改快捷键` });
+      await onChange();
+    } catch (err) {
+      setMsg({ ok: false, text: String(err) });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function removeManual(e: HotkeyEntry) {
+    if (!window.confirm(`确定删除「${e.app_name} / ${e.title}」这条手动登记？`)) return;
+    setBusy(true);
+    try {
+      await removeManualHotkeyEntry(e.id);
+      await onChange();
+    } catch (err) {
+      setMsg({ ok: false, text: String(err) });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function hideManual(e: HotkeyEntry) {
+    if (!window.confirm(`确定隐藏「${e.app_name} / ${e.title}」？\n\n它会保留来源记录，可在“已隐藏”里恢复。`)) return;
+    setBusy(true);
+    try {
+      await hideHotkeyCenterEntry(e.id);
+      await onChange();
+    } catch (err) {
+      setMsg({ ok: false, text: String(err) });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="hk-shortcut">
+      {msg && <div className={"key-msg " + (msg.ok ? "ok" : "err")}>{msg.text}</div>}
+
+      {appGroups.length === 0 ? (
+        <div className="hk-list">
+          <div className="hk-empty">还没有应用快捷键记录。</div>
+        </div>
+      ) : (
+        <div className="hk-app-browser">
+          <nav className="hk-app-nav" aria-label="应用快捷键导航">
+            <div className="hk-app-nav-title">应用</div>
+            {appGroups.map((group, index) => (
+              <button
+                className="hk-app-nav-item"
+                type="button"
+                key={group.key}
+                title={group.appName}
+                onClick={() => scrollToAppGroup(index)}
+              >
+                <span className="hk-app-nav-name">{group.appName}</span>
+                <span className="hk-app-nav-count">{group.entries.length}</span>
+              </button>
+            ))}
+          </nav>
+          <div className="hk-list hk-app-content">
+            {appGroups.map((group, index) => (
+              <div className="hk-app-group" id={appGroupDomId(index)} key={group.key}>
+                <div className="hk-app-group-head">
+                  <div className="hk-app-group-main">
+                    <div className="hk-app-group-title" title={group.appName}>
+                      {group.appName}
+                      {group.running && <span className="hk-status">（运行中）</span>}
+                    </div>
+                    <div className="hk-app-group-meta" title={formatGroupProcesses(group.processes)}>
+                      {formatGroupProcesses(group.processes)} / {group.entries.length} 个快捷键
+                    </div>
+                  </div>
+                  <div className="hk-app-group-actions">
+                    <span className="hk-src">{group.modifiableCount} 可修改</span>
+                    {group.enabledModifiableCount > 0 && (
+                      <button className="key-btn ghost" type="button" disabled={busy} onClick={() => void disableAppGroup(group)}>
+                        禁用可修改
+                      </button>
+                    )}
+                  </div>
+                </div>
+                <div className="hk-app-group-list">
+                  {group.entries.map((e) => (
+                    <div className={"hk-item" + itemStateClass(e)} key={e.id}>
+                      <div className="hk-item-main">
+                        <div className="hk-item-name" title={e.title}>{e.title}</div>
+                        <div className="hk-item-target">
+                          {sourceText(e.source_type)} / {scopeText(e.scope)}
+                          {e.process_name ? ` / ${e.process_name}` : ""}
+                          {e.window_title_match ? ` / ${e.window_title_match}` : ""}
+                          {e.target ? ` / ${e.target}` : ""}
+                        </div>
+                      </div>
+                      <div className="hk-item-actions">
+                        <span className="hk-kbd">{e.display || "未设置"}</span>
+                        <HotkeyStatusDot c={e.conflict} active={Boolean(e.display)} />
+                        {e.can_modify ? (
+                          <>
+                            <button className="key-btn" type="button" disabled={busy} onClick={() => onEditEntry(e)}>
+                              编辑
+                            </button>
+                            {e.display && (
+                              <button className="key-btn ghost" type="button" disabled={busy} onClick={() => void disableHotkey(e)}>
+                                禁用
+                              </button>
+                            )}
+                            {e.source_type === "Manual" && (
+                              <button className="key-btn ghost" type="button" disabled={busy} onClick={() => void removeManual(e)}>
+                                删除
+                              </button>
+                            )}
+                          </>
+                        ) : (
+                          <span className="hk-src">{levelText(e.manage_level)}</span>
+                        )}
+                        {canCenterHide(e) && (
+                          <button className="key-btn ghost" type="button" disabled={busy} onClick={() => void hideManual(e)}>
+                            隐藏
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+      <div className="hint">
+        应用页会合并内置默认、适配读取和手动登记；能写回的项目会显示编辑入口，只读项目仍参与查询和冲突检测。
+      </div>
+    </div>
+  );
+}
+
+function SupplementTab({
   allEntries,
+  editTarget,
   busy,
   setBusy,
   onChange,
 }: {
-  entries: HotkeyEntry[];
   allEntries: HotkeyEntry[];
+  editTarget: SupplementEditTarget | null;
   busy: boolean;
   setBusy: (b: boolean) => void;
   onChange: () => Promise<void>;
 }) {
   const [draft, setDraft] = useState<ManualHotkeyInput>(EMPTY_MANUAL_INPUT);
   const [editingId, setEditingId] = useState<string | null>(null);
-  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const [editingSourceType, setEditingSourceType] = useState<HotkeySourceType | null>(null);
   const [runningApps, setRunningApps] = useState<RunningAppInfo[]>([]);
-  const [onlyRunning, setOnlyRunning] = useState(false);
   const [observedHotkeys, setObservedHotkeys] = useState<ObservedHotkeyEntry[]>([]);
   const [observerEnabled, setObserverEnabled] = useState(false);
+  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -1023,15 +1381,10 @@ function ManualTab({
     };
   }, []);
 
-  const runningProcessNames = useMemo(
-    () => new Set(runningApps.map((app) => app.process_name.trim().toLowerCase()).filter(Boolean)),
-    [runningApps],
-  );
-
-  const visibleEntries = useMemo(
-    () => (onlyRunning ? entries.filter((entry) => isManualEntryRunning(entry, runningApps, runningProcessNames)) : entries),
-    [entries, onlyRunning, runningApps, runningProcessNames],
-  );
+  useEffect(() => {
+    if (!editTarget) return;
+    editEntry(editTarget.entry);
+  }, [editTarget?.token]);
 
   function patchDraft(p: Partial<ManualHotkeyInput>) {
     setDraft((cur) => ({ ...cur, ...p }));
@@ -1039,15 +1392,71 @@ function ManualTab({
   }
 
   async function refreshRunningApps() {
-    const [apps, observed, status] = await Promise.all([
-      listRunningApps(),
+    const apps = await listRunningApps();
+    setRunningApps(apps);
+  }
+
+  async function refreshObserved() {
+    const [observed, status] = await Promise.all([
       listObservedHotkeys(),
       getHotkeyObserverStatus(),
     ]);
-    setRunningApps(apps);
     setObservedHotkeys(observed);
     setObserverEnabled(status.enabled);
   }
+
+  function chooseRunningApp(key: string) {
+    const app = runningApps.find((item) => runningAppKey(item) === key);
+    if (!app) return;
+    patchDraft({
+      app_name: appNameFromProcess(app.process_name),
+      process_name: app.process_name,
+      window_title_match: app.window_title,
+    });
+  }
+
+  function editEntry(e: HotkeyEntry) {
+    setEditingId(e.id);
+    setEditingSourceType(e.source_type);
+    setDraft({
+      app_name: e.app_name,
+      process_name: e.process_name ?? "",
+      window_title_match: e.window_title_match ?? "",
+      title: e.title,
+      accelerator: e.display,
+      scope: e.scope,
+      notes: e.target ?? "",
+    });
+    setMsg(null);
+  }
+
+  function resetDraft() {
+    setEditingId(null);
+    setEditingSourceType(null);
+    setDraft(EMPTY_MANUAL_INPUT);
+    setMsg(null);
+  }
+
+  async function saveManual() {
+    setBusy(true);
+    try {
+      if (editingId && editingSourceType === "AppConfig") {
+        await updateAppConfigHotkeyEntry(editingId, draft.accelerator);
+      } else if (editingId) {
+        await updateManualHotkeyEntry(editingId, draft);
+      } else {
+        await addManualHotkeyEntry(draft);
+      }
+      resetDraft();
+      await onChange();
+    } catch (e) {
+      setMsg({ ok: false, text: String(e) });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const editingIsAppConfig = editingSourceType === "AppConfig";
 
   async function toggleObserver() {
     setBusy(true);
@@ -1085,83 +1494,9 @@ function ManualTab({
     try {
       await removeObservedHotkey(entry.id);
       setObservedHotkeys(await listObservedHotkeys());
+      setMsg(null);
     } catch (e) {
       setMsg({ ok: false, text: String(e) });
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  function chooseRunningApp(key: string) {
-    const app = runningApps.find((item) => runningAppKey(item) === key);
-    if (!app) return;
-    patchDraft({
-      app_name: appNameFromProcess(app.process_name),
-      process_name: app.process_name,
-      window_title_match: app.window_title,
-    });
-  }
-
-  function editEntry(e: HotkeyEntry) {
-    setEditingId(e.id);
-    setDraft({
-      app_name: e.app_name,
-      process_name: e.process_name ?? "",
-      window_title_match: e.window_title_match ?? "",
-      title: e.title,
-      accelerator: e.display,
-      scope: e.scope,
-      notes: e.target ?? "",
-    });
-    setMsg(null);
-  }
-
-  function resetDraft() {
-    setEditingId(null);
-    setDraft(EMPTY_MANUAL_INPUT);
-    setMsg(null);
-  }
-
-  async function saveManual() {
-    setBusy(true);
-    try {
-      if (editingId) {
-        await updateManualHotkeyEntry(editingId, draft);
-      } else {
-        await addManualHotkeyEntry(draft);
-      }
-      resetDraft();
-      await onChange();
-    } catch (e) {
-      setMsg({ ok: false, text: String(e) });
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function removeManual(e: HotkeyEntry) {
-    if (!window.confirm(`确定删除「${e.app_name} / ${e.title}」这条手动登记？`)) return;
-    setBusy(true);
-    try {
-      await removeManualHotkeyEntry(e.id);
-      if (editingId === e.id) resetDraft();
-      await onChange();
-    } catch (err) {
-      setMsg({ ok: false, text: String(err) });
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function hideManual(e: HotkeyEntry) {
-    if (!window.confirm(`确定隐藏「${e.app_name} / ${e.title}」？\n\n它会保留登记数据，可在“已隐藏”里恢复。`)) return;
-    setBusy(true);
-    try {
-      await hideHotkeyCenterEntry(e.id);
-      if (editingId === e.id) resetDraft();
-      await onChange();
-    } catch (err) {
-      setMsg({ ok: false, text: String(err) });
     } finally {
       setBusy(false);
     }
@@ -1174,13 +1509,14 @@ function ManualTab({
           <button className="key-btn" type="button" disabled={busy} onClick={() => void toggleObserver()}>
             {observerEnabled ? "停止观察" : "开始观察"}
           </button>
-          <button className="key-btn ghost" type="button" disabled={busy} onClick={() => void refreshRunningApps()}>
+          <button className="key-btn ghost" type="button" disabled={busy} onClick={() => void refreshObserved()}>
             刷新记录
           </button>
           <span className="hk-src">
             {observerEnabled ? "观察中：切到目标应用后直接使用快捷键" : "未开启观察记录"}
           </span>
         </div>
+        {msg && <div className={"key-msg " + (msg.ok ? "ok" : "err")}>{msg.text}</div>}
         <div className="hk-list">
           {observedHotkeys.length === 0 && (
             <div className="hk-empty">还没有观察到应用快捷键。</div>
@@ -1229,10 +1565,6 @@ function ManualTab({
             </option>
           ))}
         </select>
-        <label className="check-row hk-toggle">
-          <input type="checkbox" checked={onlyRunning} onChange={(e) => setOnlyRunning(e.target.checked)} />
-          只看运行中
-        </label>
         <button className="key-btn ghost" type="button" disabled={busy} onClick={() => void refreshRunningApps()}>
           刷新运行中
         </button>
@@ -1243,6 +1575,7 @@ function ManualTab({
             className="f-input"
             value={draft.app_name}
             placeholder="例如 酷狗音乐"
+            disabled={editingIsAppConfig}
             onChange={(e) => patchDraft({ app_name: e.target.value })}
           />
         </Field>
@@ -1251,6 +1584,7 @@ function ManualTab({
             className="f-input"
             value={draft.process_name}
             placeholder="例如 KuGou.exe、Pogget.exe"
+            disabled={editingIsAppConfig}
             onChange={(e) => patchDraft({ process_name: e.target.value })}
           />
         </Field>
@@ -1259,6 +1593,7 @@ function ManualTab({
             className="f-input"
             value={draft.window_title_match}
             placeholder="可选：用于识别运行中的窗口"
+            disabled={editingIsAppConfig}
             onChange={(e) => patchDraft({ window_title_match: e.target.value })}
           />
         </Field>
@@ -1267,6 +1602,7 @@ function ManualTab({
             className="f-input"
             value={draft.title}
             placeholder="例如 播放 / 暂停"
+            disabled={editingIsAppConfig}
             onChange={(e) => patchDraft({ title: e.target.value })}
           />
         </Field>
@@ -1279,7 +1615,7 @@ function ManualTab({
           <HotkeyConflictHint
             entries={allEntries}
             value={draft.accelerator}
-            sourceType="Manual"
+            sourceType={editingIsAppConfig ? "AppConfig" : "Manual"}
             scope={draft.scope}
             appName={draft.app_name}
             processName={draft.process_name}
@@ -1290,6 +1626,7 @@ function ManualTab({
           <select
             className="f-input"
             value={draft.scope}
+            disabled={editingIsAppConfig}
             onChange={(e) => patchDraft({ scope: e.target.value as HotkeyScope })}
           >
             <option value="Global">全局</option>
@@ -1303,13 +1640,16 @@ function ManualTab({
             className="f-input"
             value={draft.notes}
             placeholder="可选：来源、配置位置或说明"
+            disabled={editingIsAppConfig}
             onChange={(e) => patchDraft({ notes: e.target.value })}
           />
         </Field>
-        {msg && <div className={"key-msg " + (msg.ok ? "ok" : "err")}>{msg.text}</div>}
+        {editingIsAppConfig && (
+          <div className="hint">当前编辑的是应用配置项，只会写回这一个快捷键字段。</div>
+        )}
         <div className="hk-jump">
           <button className="key-btn" type="button" disabled={busy} onClick={() => void saveManual()}>
-            {editingId ? "保存修改" : "添加登记"}
+            {editingIsAppConfig ? "保存到应用配置" : editingId ? "保存修改" : "添加登记"}
           </button>
           {editingId && (
             <button className="key-btn ghost" type="button" disabled={busy} onClick={resetDraft}>
@@ -1318,45 +1658,8 @@ function ManualTab({
           )}
         </div>
       </div>
-
-      <div className="hk-list">
-        {visibleEntries.length === 0 && (
-          <div className="hk-empty">
-            {onlyRunning ? "当前运行中的应用还没有登记快捷键。" : "还没有手动登记的应用快捷键。"}
-          </div>
-        )}
-        {visibleEntries.map((e) => (
-          <div className={"hk-item" + itemStateClass(e)} key={e.id}>
-            <div className="hk-item-main">
-              <div className="hk-item-name" title={e.title}>
-                {e.title}
-                {isManualEntryRunning(e, runningApps, runningProcessNames) && <span className="hk-status">（运行中）</span>}
-              </div>
-              <div className="hk-item-target">
-                {e.app_name} / {scopeText(e.scope)}
-                {e.process_name ? ` / ${e.process_name}` : ""}
-                {e.window_title_match ? ` / ${e.window_title_match}` : ""}
-                {e.target ? ` / ${e.target}` : ""}
-              </div>
-            </div>
-            <div className="hk-item-actions">
-              <span className="hk-kbd">{e.display}</span>
-              <HotkeyStatusDot c={e.conflict} active={Boolean(e.display)} />
-              <button className="key-btn" type="button" disabled={busy} onClick={() => editEntry(e)}>
-                编辑
-              </button>
-              <button className="key-btn ghost" type="button" disabled={busy} onClick={() => void removeManual(e)}>
-                删除
-              </button>
-              <button className="key-btn ghost" type="button" disabled={busy} onClick={() => void hideManual(e)}>
-                隐藏
-              </button>
-            </div>
-          </div>
-        ))}
-      </div>
       <div className="hint">
-        观察记录会统计你在前台应用中实际按过的快捷组合；登记后进入总览，并参与冲突检测。
+        观察记录会统计你在前台应用中实际按过的快捷组合；登记后进入应用页，并参与冲突检测。
       </div>
     </div>
   );
@@ -1430,7 +1733,7 @@ function HiddenTab({
         ))}
       </div>
       <div className="hint">
-        这里管理的是 Windows 系统目录和手动登记应用快捷键的隐藏项；快捷方式的隐藏项仍在“快捷方式”标签内恢复。
+        这里管理的是 Windows 系统目录、应用配置、应用内置和手动登记快捷键的隐藏项；快捷方式的隐藏项仍在“快捷方式”标签内恢复。
       </div>
     </div>
   );
@@ -1470,6 +1773,10 @@ function sourceText(source: HotkeyEntry["source_type"]): string {
       return "Windows";
     case "Manual":
       return "手动登记";
+    case "AppConfig":
+      return "应用配置";
+    case "AppBuiltin":
+      return "应用内置";
     case "ShortcutLink":
       return "快捷方式";
     default:

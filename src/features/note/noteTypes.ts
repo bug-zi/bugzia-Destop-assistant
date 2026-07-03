@@ -10,6 +10,7 @@
  *   note window mount  -> NOTE_READY {id}               (note -> main)
  *   main               -> emitTo(label, NOTE_HYDRATE)   (main -> that note)
  *   edit / move / pin  -> NOTE_CHANGED / NOTE_GEOM / NOTE_PINNED  (note -> main)
+ *   destroy hotkey     -> NOTE_DESTROY_CONFIRM {id}    (main -> note)
  *   destroy            -> NOTE_DESTROYED {id}           (note -> main, then close)
  *   style change       -> NOTE_SETTINGS (broadcast)     (main -> all notes)
  *   note hotkey (none) -> NOTE_QUICK_CREATE             (backend -> main)
@@ -55,10 +56,12 @@ export const NOTE_GEOM = "note://geom";
 export const NOTE_PINNED = "note://pinned";
 /** note://destroyed — note -> main before self-close. Payload: {id}. */
 export const NOTE_DESTROYED = "note://destroyed";
+/** note://destroy-confirm — main -> note, ask the note to show its delete confirmation. */
+export const NOTE_DESTROY_CONFIRM = "note://destroy-confirm";
 /** note://destroy-current — backend -> main when the `note_destroy` hotkey
  *  fires. Payload: none. Main decides which note "current" means (last
  *  created/edited, fallback most-recent) from its own authoritative note list,
- *  then destroys it via the same path as NOTE_DESTROYED. OS window-focus is
+ *  then asks that note to show its delete confirmation. OS window-focus is
  *  unreliable for these borderless/transparent note windows, so the choice
  *  lives in main where the data is. */
 export const NOTE_DESTROY_CURRENT = "note://destroy-current";
