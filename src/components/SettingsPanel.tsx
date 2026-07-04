@@ -5,6 +5,7 @@ import type {
   AppSettings,
   AppearanceSettings,
   AiSettings,
+  DailySettings,
   HotkeySettings,
   NoteSettings,
   PetSettings,
@@ -38,7 +39,7 @@ const NAV: { title: string; leaves: { key: string; label: string }[] }[] = [
   },
   { title: "桌面组件", leaves: [{ key: "pet", label: "桌宠" }, { key: "waveform", label: "桌面波形" }] },
   { title: "AI 与搜索", leaves: [{ key: "ai", label: "AI 接口" }, { key: "search", label: "搜索" }] },
-  { title: "通知", leaves: [{ key: "agent", label: "Agent 通知" }, { key: "social", label: "社交通知" }] },
+  { title: "通知", leaves: [{ key: "daily", label: "每日" }, { key: "agent", label: "Agent 通知" }, { key: "social", label: "社交通知" }] },
 ];
 
 interface SettingsPanelProps {
@@ -68,6 +69,8 @@ export default function SettingsPanel({ settings, onChange, onClose }: SettingsP
     onChange({ ...settings, agent_notify: { ...settings.agent_notify, ...p } });
   const patchSocialNotify = (p: Partial<SocialNotifySettings>) =>
     onChange({ ...settings, social_notify: { ...settings.social_notify, ...p } });
+  const patchDaily = (p: Partial<DailySettings>) =>
+    onChange({ ...settings, daily: { ...settings.daily, ...p } });
   const patchHotkey = (p: Partial<HotkeySettings>) =>
     onChange({ ...settings, hotkey: { ...settings.hotkey, ...p } });
 
@@ -198,6 +201,7 @@ export default function SettingsPanel({ settings, onChange, onClose }: SettingsP
   const n = settings.note;
   const an = settings.agent_notify;
   const sn = settings.social_notify;
+  const daily = settings.daily;
   const hk = settings.hotkey;
 
   return (
@@ -596,6 +600,65 @@ export default function SettingsPanel({ settings, onChange, onClose }: SettingsP
                 <ColorRow label="文字透明度" value={n.text_alpha} min={0.1} max={1} step={0.01}
                   fmt={(v) => v.toFixed(2)} onChange={(v) => patchNote({ text_alpha: v })} />
                 <div className="hint">作为新生成便笺的默认样式；已打开的便笺也会实时跟随变化。</div>
+              </section>
+            )}
+
+            {/* ── 每日 ── */}
+            {active === "daily" && (
+              <section className="settings-section">
+                <h4>每日</h4>
+                <label className="check-row">
+                  <input
+                    type="checkbox"
+                    checked={daily.push_enabled}
+                    onChange={(e) => patchDaily({ push_enabled: e.target.checked })}
+                  />
+                  每日推送（每 2 小时）
+                </label>
+                <div className="hint">在 0、2、4、6、8、10、12、14、16、18、20、22 点自动生成。</div>
+                <label className="check-row">
+                  <input
+                    type="checkbox"
+                    checked={daily.push_news}
+                    onChange={(e) => patchDaily({ push_news: e.target.checked })}
+                  />
+                  推送新闻
+                </label>
+                <label className="check-row">
+                  <input
+                    type="checkbox"
+                    checked={daily.push_quote}
+                    onChange={(e) => patchDaily({ push_quote: e.target.checked })}
+                  />
+                  推送名言
+                </label>
+                <label className="check-row">
+                  <input
+                    type="checkbox"
+                    checked={daily.push_trivia}
+                    onChange={(e) => patchDaily({ push_trivia: e.target.checked })}
+                  />
+                  推送冷知识
+                </label>
+                <label className="check-row">
+                  <input
+                    type="checkbox"
+                    checked={daily.review_enabled}
+                    onChange={(e) => patchDaily({ review_enabled: e.target.checked })}
+                  />
+                  每日复盘
+                </label>
+                <Field label="复盘时间">
+                  <input
+                    className="f-input"
+                    type="time"
+                    value={daily.review_time}
+                    onChange={(e) => patchDaily({ review_time: e.target.value || "23:00" })}
+                  />
+                </Field>
+                <div className="hint">
+                  到点后由桌宠气泡提醒；应用需要运行，且桌宠启用时可见。
+                </div>
               </section>
             )}
 

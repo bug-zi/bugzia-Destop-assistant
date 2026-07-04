@@ -568,7 +568,7 @@ impl Default for PetSettings {
             speech_lines: default_pet_speech_lines(),
             x: -1,
             y: -1,
-            w: 210,
+            w: 230,
             h: 300,
         }
     }
@@ -715,6 +715,52 @@ impl Default for AgentNotifySettings {
     }
 }
 
+/// Daily digest settings. The main window schedules local-time reminders and the
+/// pet overlay renders them as bubbles, so this section only stores user intent.
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct DailySettings {
+    /// Morning digest: news + quote + trivia.
+    #[serde(default = "default_true")]
+    pub push_enabled: bool,
+    /// Local HH:mm time for the digest.
+    #[serde(default = "default_daily_push_time")]
+    pub push_time: String,
+    #[serde(default = "default_true")]
+    pub push_news: bool,
+    #[serde(default = "default_true")]
+    pub push_quote: bool,
+    #[serde(default = "default_true")]
+    pub push_trivia: bool,
+    /// Nightly review of today's recorded activity.
+    #[serde(default = "default_true")]
+    pub review_enabled: bool,
+    /// Local HH:mm time for the review.
+    #[serde(default = "default_daily_review_time")]
+    pub review_time: String,
+}
+
+fn default_daily_push_time() -> String {
+    "09:00".to_string()
+}
+
+fn default_daily_review_time() -> String {
+    "23:00".to_string()
+}
+
+impl Default for DailySettings {
+    fn default() -> Self {
+        Self {
+            push_enabled: true,
+            push_time: default_daily_push_time(),
+            push_news: true,
+            push_quote: true,
+            push_trivia: true,
+            review_enabled: true,
+            review_time: default_daily_review_time(),
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
 pub struct AppSettings {
     #[serde(default)]
@@ -739,6 +785,8 @@ pub struct AppSettings {
     pub agent_notify: AgentNotifySettings,
     #[serde(default)]
     pub social_notify: SocialNotifySettings,
+    #[serde(default)]
+    pub daily: DailySettings,
     #[serde(default)]
     pub hotkey: HotkeySettings,
 }

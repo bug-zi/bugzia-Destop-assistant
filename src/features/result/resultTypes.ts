@@ -13,7 +13,7 @@
 import type { ChatMessage } from "../ai/chat";
 
 /** Which surface the result overlay shows. */
-export type ResultMode = "chat" | "file";
+export type ResultMode = "chat" | "file" | "daily";
 
 /** A single local file/dir hit from `search_files` (mirrors the Rust struct). */
 export interface FileResult {

@@ -389,6 +389,7 @@ dependencies = [
 name = "bugzia"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "cpal",
  "futures-util",
  "keyring",

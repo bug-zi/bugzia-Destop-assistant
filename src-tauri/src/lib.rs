@@ -1,6 +1,7 @@
 mod agent_notify;
 mod ai;
 mod conversations;
+mod daily;
 mod file_search;
 mod hotkey_center;
 mod notes;
@@ -23,7 +24,8 @@ use file_search::{open_file, reveal_file, search_files};
 use hotkey_center::{
     app_config_hotkey_entry_update, hotkey_center_detect_conflicts, hotkey_center_hidden_list,
     hotkey_center_hide_entry, hotkey_center_scan, hotkey_center_unhide_entry,
-    hotkey_observer_set_enabled, hotkey_observer_status, manual_hotkey_entries_list,
+    hotkey_observer_set_enabled, hotkey_observer_status, start_hotkey_remapper,
+    manual_hotkey_entries_list,
     manual_hotkey_entry_add, manual_hotkey_entry_remove, manual_hotkey_entry_update,
     observed_hotkey_promote, observed_hotkey_remove, observed_hotkeys_list, running_apps_list,
 };
@@ -84,7 +86,7 @@ extern "system" {
 
 use tauri::menu::{CheckMenuItem, IsMenuItem, Menu, MenuItem};
 use tauri::tray::TrayIconBuilder;
-use tauri::{AppHandle, Emitter, Manager, Wry};
+use tauri::{AppHandle, Emitter, LogicalSize, Manager, Wry};
 use tauri_plugin_autostart::{AutoLaunchManager, MacosLauncher};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 
@@ -271,6 +273,30 @@ fn pet_set_locked(app: AppHandle, locked: bool) {
 fn pet_set_always_on_top(app: AppHandle, top: bool) {
     if let Some(win) = app.get_webview_window("pet") {
         pet_apply_layer(&win, top);
+    }
+}
+
+#[tauri::command]
+fn pet_enforce_min_size(app: AppHandle, min_width: u32, min_height: u32, always_on_top: bool) {
+    if let Some(win) = app.get_webview_window("pet") {
+        let _ = win.set_min_size(Some(LogicalSize::new(
+            min_width as f64,
+            min_height as f64,
+        )));
+        let Ok(size) = win.inner_size() else {
+            pet_apply_layer(&win, always_on_top);
+            return;
+        };
+        let scale = win.scale_factor().unwrap_or(1.0);
+        let width = (size.width as f64 / scale).round() as u32;
+        let height = (size.height as f64 / scale).round() as u32;
+        if width < min_width || height < min_height {
+            let _ = win.set_size(LogicalSize::new(
+                width.max(min_width) as f64,
+                height.max(min_height) as f64,
+            ));
+        }
+        pet_apply_layer(&win, always_on_top);
     }
 }
 
@@ -781,6 +807,9 @@ pub fn run() {
         .setup(|app| {
             sync_autostart(app.handle());
             build_tray(app.handle())?;
+            if let Err(e) = start_hotkey_remapper(app.handle()) {
+                eprintln!("[bugzia] hotkey remapper: {e}");
+            }
             // Agent-notify receiver: a localhost HTTP endpoint that Claude Code
             // and Codex POST lifecycle events to (turn complete / approval
             // needed / errors). Started only when the user enables it; a bind
@@ -832,12 +861,14 @@ pub fn run() {
             open_file,
             reveal_file,
             weather::weather,
+            daily::daily_push_digest,
             waveform::waveform_set_enabled,
             waveform::waveform_set_locked,
             waveform::waveform_set_always_on_top,
             set_result_always_on_top,
             pet_set_locked,
             pet_set_always_on_top,
+            pet_enforce_min_size,
             pet_assets_dir,
             pet_eat_files,
             notes_load,

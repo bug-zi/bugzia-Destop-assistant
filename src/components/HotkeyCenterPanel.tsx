@@ -664,77 +664,7 @@ function entrySearchText(entry: HotkeyEntry): string {
   ].join(" ").toLowerCase();
 }
 
-function keyNameForCapture(key: string): string | null {
-  if (key.length === 1) {
-    if (/^[a-z0-9]$/i.test(key)) return key.toUpperCase();
-    switch (key) {
-      case ".":
-      case ",":
-      case ";":
-      case "/":
-      case "\\":
-      case "`":
-      case "=":
-        return key;
-      case "+":
-        return "Plus";
-      case "-":
-        return "Minus";
-      case "*":
-        return "*";
-      default:
-        return null;
-    }
-  }
-  switch (key) {
-    case " ":
-    case "Space":
-    case "Spacebar":
-      return "Space";
-    case "ArrowLeft":
-      return "Left";
-    case "ArrowRight":
-      return "Right";
-    case "ArrowUp":
-      return "Up";
-    case "ArrowDown":
-      return "Down";
-    case "PageUp":
-    case "PageDown":
-    case "Home":
-    case "End":
-    case "Insert":
-    case "PrintScreen":
-    case "Pause":
-    case "NumLock":
-    case "ScrollLock":
-    case "CapsLock":
-      return key;
-    case "Escape":
-      return null;
-    case "Control":
-    case "Alt":
-    case "Shift":
-    case "Meta":
-      return null;
-    default:
-      return key;
-  }
-}
-
-function acceleratorFromEvent(e: React.KeyboardEvent<HTMLInputElement>): string | null {
-  const key = keyNameForCapture(e.key);
-  if (!key) return null;
-  const parts: string[] = [];
-  if (e.metaKey) parts.push("Win");
-  if (e.ctrlKey) parts.push("Ctrl");
-  if (e.altKey) parts.push("Alt");
-  if (e.shiftKey) parts.push("Shift");
-  parts.push(key);
-  return parts.join("+");
-}
-
-function HotkeyCaptureInput({
+function HotkeyTextInput({
   value,
   placeholder,
   onChange,
@@ -778,17 +708,7 @@ function HotkeyCaptureInput({
             return;
           }
           e.currentTarget.blur();
-          return;
         }
-        if (e.key === "Backspace" || e.key === "Delete") {
-          e.preventDefault();
-          onChange("");
-          return;
-        }
-        const next = acceleratorFromEvent(e);
-        if (!next) return;
-        e.preventDefault();
-        onChange(next);
       }}
     />
   );
@@ -909,9 +829,9 @@ function BugziaTab({
         <ReadonlyKey label="销毁当前便笺" entry={byId.get("bugzia.note_destroy")} />
       </div>
       <Field label="召唤输入框">
-        <HotkeyCaptureInput
+        <HotkeyTextInput
           value={hotkey.summon}
-          placeholder="alt+space"
+          placeholder="Alt+Space"
           onChange={(value) => {
             setHkErr(null);
             onPatchHotkey({ summon: value });
@@ -927,9 +847,9 @@ function BugziaTab({
         />
       </Field>
       <Field label="召唤便笺">
-        <HotkeyCaptureInput
+        <HotkeyTextInput
           value={hotkey.note}
-          placeholder="alt+n"
+          placeholder="Alt+C"
           onChange={(value) => {
             setHkErr(null);
             onPatchHotkey({ note: value });
@@ -945,9 +865,9 @@ function BugziaTab({
         />
       </Field>
       <Field label="直接新建便笺">
-        <HotkeyCaptureInput
+        <HotkeyTextInput
           value={hotkey.note_create}
-          placeholder="alt+shift+n"
+          placeholder="Alt+Shift+C"
           onChange={(value) => {
             setHkErr(null);
             onPatchHotkey({ note_create: value });
@@ -963,9 +883,9 @@ function BugziaTab({
         />
       </Field>
       <Field label="销毁当前便笺">
-        <HotkeyCaptureInput
+        <HotkeyTextInput
           value={hotkey.note_destroy}
-          placeholder="alt+w"
+          placeholder="Alt+Z"
           onChange={(value) => {
             setHkErr(null);
             onPatchHotkey({ note_destroy: value });
@@ -1708,9 +1628,9 @@ function SupplementTab({
           />
         </Field>
         <Field label="快捷键">
-          <HotkeyCaptureInput
+          <HotkeyTextInput
             value={draft.accelerator}
-            placeholder="例如 Alt+K、Win+Shift+S"
+            placeholder="例如 Alt+Shift+W"
             onChange={(value) => patchDraft({ accelerator: value })}
           />
           <HotkeyConflictHint
@@ -2063,10 +1983,10 @@ function ShortcutTab({
               <div className="hk-item-actions">
                 {editing ? (
                   <>
-                    <HotkeyCaptureInput
+                    <HotkeyTextInput
                       className="f-input hk-edit"
                       value={editVal}
-                      placeholder="如 Ctrl+Alt+F9"
+                      placeholder="如 Alt+Shift+W"
                       autoFocus
                       onChange={setEditVal}
                       onCommit={() => void applyEdit(it)}

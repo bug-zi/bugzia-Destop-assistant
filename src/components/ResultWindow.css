@@ -132,3 +132,223 @@
   min-width: 0;
   padding: 0 12px;
 }
+
+.result-body.daily-body {
+  padding: 8px 0 12px;
+}
+
+.daily-view {
+  width: 100%;
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: row;
+}
+
+.daily-rail {
+  width: 180px;
+  flex: 0 0 180px;
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid rgba(0, 0, 0, 0.08);
+  background: rgba(255, 255, 255, 0.18);
+  overflow: hidden;
+}
+
+.daily-rail-head {
+  padding: 8px 10px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  opacity: 0.6;
+  text-transform: uppercase;
+  flex: 0 0 auto;
+}
+
+.daily-day-list {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  padding: 0 6px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.daily-rail-empty {
+  padding: 12px 8px;
+  font-size: 12px;
+  opacity: 0.5;
+  text-align: center;
+}
+
+.daily-day-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  padding: 7px 8px;
+  border: 0;
+  border-radius: var(--bugzia-result-item-radius);
+  background: rgba(
+    var(--bugzia-result-unlocked-r, 255),
+    var(--bugzia-result-unlocked-g, 255),
+    var(--bugzia-result-unlocked-b, 255),
+    var(--bugzia-result-unlocked-a, 0.12)
+  );
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.daily-day-item:hover,
+.daily-day-item.active {
+  background: rgba(255, 255, 255, 0.32);
+}
+
+.daily-day-key {
+  font-size: 12.5px;
+  line-height: 1.3;
+  font-weight: 600;
+}
+
+.daily-day-meta {
+  font-size: 10.5px;
+  opacity: 0.55;
+}
+
+.daily-content {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  padding: 0 12px;
+  display: flex;
+  flex-direction: column;
+}
+
+.daily-page-actions {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  justify-content: flex-start;
+  padding-bottom: 8px;
+}
+
+.daily-push-btn {
+  height: 26px;
+  padding: 0 10px;
+  border: 1px solid var(--bugzia-border);
+  background: var(--bugzia-input-bg);
+  color: var(--bugzia-text);
+  border-radius: 6px;
+  font-size: calc(12px * var(--bugzia-font-scale));
+  cursor: pointer;
+  transition: background 0.15s ease, opacity 0.15s ease;
+}
+
+.daily-push-btn:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.95);
+}
+
+.daily-push-btn:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
+.daily-push-error {
+  color: #b42318;
+  font-size: calc(12px * var(--bugzia-font-scale));
+}
+
+.daily-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--bugzia-result-row-gap);
+  padding-right: 2px;
+}
+
+.daily-scroll::-webkit-scrollbar {
+  width: var(--bugzia-result-scrollbar-w);
+}
+
+.daily-scroll::-webkit-scrollbar-thumb {
+  background: rgba(31, 36, 40, 0.22);
+  border-radius: 4px;
+}
+
+.daily-empty {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  color: var(--bugzia-text-weak);
+  font-size: calc(13px * var(--bugzia-font-scale));
+}
+
+.daily-entry {
+  border: 1px solid var(--bugzia-border);
+  border-radius: var(--bugzia-result-item-radius);
+  background: rgba(255, 255, 255, 0.72);
+  padding: 10px 11px;
+  color: var(--bugzia-text);
+}
+
+.daily-entry-time {
+  color: var(--bugzia-text-weak);
+  font-size: calc(11px * var(--bugzia-font-scale));
+  margin-bottom: 8px;
+}
+
+.daily-section + .daily-section {
+  margin-top: 9px;
+}
+
+.daily-section-title {
+  font-size: calc(12px * var(--bugzia-font-scale));
+  color: var(--bugzia-text-weak);
+  margin-bottom: 4px;
+}
+
+.daily-news-list {
+  margin: 0;
+  padding-left: 18px;
+}
+
+.daily-news-item {
+  margin: 5px 0;
+  line-height: 1.45;
+}
+
+.daily-news-item a {
+  color: #2b5fd6;
+  text-decoration: none;
+}
+
+.daily-news-item a:hover {
+  text-decoration: underline;
+}
+
+.daily-news-summary {
+  display: block;
+  margin-top: 2px;
+  color: var(--bugzia-text);
+  font-size: calc(12px * var(--bugzia-font-scale));
+}
+
+.daily-news-meta {
+  display: block;
+  margin-top: 1px;
+  color: var(--bugzia-text-weak);
+  font-size: calc(11px * var(--bugzia-font-scale));
+}
+
+.daily-text {
+  font-size: calc(13px * var(--bugzia-font-scale));
+  line-height: 1.55;
+  white-space: pre-wrap;
+}

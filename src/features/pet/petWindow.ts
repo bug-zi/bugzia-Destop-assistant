@@ -24,9 +24,9 @@ import { invoke } from "@tauri-apps/api/core";
 import { loadSettings } from "../settings/settingsStore";
 
 const LABEL = "pet";
-const DEFAULT_W = 210;
+const DEFAULT_W = 230;
 const DEFAULT_H = 300;
-const MIN_W = 150;
+const MIN_W = 230;
 const MIN_H = 220;
 
 /** Saved overlay geometry (LOGICAL px) handed to `showPetWindow`. */
@@ -86,10 +86,28 @@ function attachGeometryIfNeeded(win: WebviewWindow): void {
   });
 }
 
+async function enforcePetWindowMinSize(win: WebviewWindow): Promise<void> {
+  suppressGeomPersist = true;
+  try {
+    await win.setMinSize(new LogicalSize(MIN_W, MIN_H));
+    const [size, sf] = await Promise.all([win.innerSize(), win.scaleFactor()]);
+    const w = Math.round(size.width / sf);
+    const h = Math.round(size.height / sf);
+    if (w < MIN_W || h < MIN_H) {
+      await win.setSize(new LogicalSize(Math.max(MIN_W, w), Math.max(MIN_H, h)));
+    }
+  } finally {
+    setTimeout(() => {
+      suppressGeomPersist = false;
+    }, 60);
+  }
+}
+
 /** Get-or-create the pet window. Awaits creation so callers can position it. */
 export async function ensurePetWindow(): Promise<WebviewWindow> {
   const existing = await WebviewWindow.getByLabel(LABEL);
   if (existing) {
+    await enforcePetWindowMinSize(existing);
     attachGeometryIfNeeded(existing);
     return existing;
   }

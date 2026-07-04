@@ -174,9 +174,10 @@
 
 .pet-look {
   position: relative;
-  height: calc(100vh - var(--bubble-h) - 4px);
-  max-height: 100%;
+  width: var(--pet-look-w);
+  height: var(--pet-look-h);
   max-width: calc(100vw - 8px);
+  max-height: calc(100vh - var(--bubble-h) - 4px);
   aspect-ratio: 512 / 724;
   transform: scale(var(--scale, 1));
   transform-origin: bottom center;

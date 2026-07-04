@@ -37,7 +37,8 @@ use windows::Win32::System::Diagnostics::ToolHelp::{
 use windows::Win32::System::Threading::GetCurrentThreadId;
 #[cfg(target_os = "windows")]
 use windows::Win32::UI::Input::KeyboardAndMouse::{
-    GetAsyncKeyState, VK_CONTROL, VK_LWIN, VK_MENU, VK_RWIN, VK_SHIFT,
+    GetAsyncKeyState, SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYBD_EVENT_FLAGS,
+    KEYEVENTF_KEYUP, VIRTUAL_KEY, VK_CONTROL, VK_LWIN, VK_MENU, VK_RWIN, VK_SHIFT,
 };
 #[cfg(target_os = "windows")]
 use windows::Win32::UI::WindowsAndMessaging::{
@@ -377,6 +378,31 @@ struct HotkeyObserverRuntime {
 }
 
 #[cfg(target_os = "windows")]
+#[derive(Default)]
+struct HotkeyRemapperRuntime {
+    enabled: bool,
+    thread_id: u32,
+}
+
+#[cfg(target_os = "windows")]
+#[derive(Clone)]
+struct AppHotkeyRemapRule {
+    process_name: &'static str,
+    from: NormalizedAccelerator,
+    to: NormalizedAccelerator,
+    block_original: bool,
+}
+
+#[cfg(target_os = "windows")]
+enum HotkeyRemapAction {
+    Remap {
+        from: NormalizedAccelerator,
+        to: NormalizedAccelerator,
+    },
+    Block,
+}
+
+#[cfg(target_os = "windows")]
 static HOTKEY_OBSERVER_RUNTIME: OnceLock<Mutex<HotkeyObserverRuntime>> = OnceLock::new();
 
 #[cfg(target_os = "windows")]
@@ -385,6 +411,12 @@ static HOTKEY_OBSERVER_SENDER: OnceLock<Mutex<Option<mpsc::Sender<ObservedHotkey
 
 #[cfg(target_os = "windows")]
 static HOTKEY_OBSERVER_LAST: OnceLock<Mutex<Option<ObservedHotkeySample>>> = OnceLock::new();
+
+#[cfg(target_os = "windows")]
+static HOTKEY_REMAP_RUNTIME: OnceLock<Mutex<HotkeyRemapperRuntime>> = OnceLock::new();
+
+#[cfg(target_os = "windows")]
+static HOTKEY_REMAP_RULES: OnceLock<Mutex<Vec<AppHotkeyRemapRule>>> = OnceLock::new();
 
 // ---------------------------------------------------------------------------
 // Windows 系统快捷键只读目录 + 手动登记应用快捷键
@@ -2084,7 +2116,7 @@ fn pixpin_config_entries() -> Vec<HotkeyEntry> {
                 HotkeyScope::Global,
                 &path,
                 true,
-                "PixPin 用户配置 PixPinConfig.json，可写回对应动作 shortCut 字段。",
+                "PixPin 用户配置 PixPinConfig.json，可写回对应快捷键字段，并同步配置时间戳。",
             ))
         })
         .collect()
@@ -3624,7 +3656,10 @@ fn validate_app_config_accel(raw: &str) -> Result<String, String> {
     if compact.is_empty() {
         return Ok(String::new());
     }
-    if parse_accel(&compact).is_some() || is_modifier_only_accel(&compact) {
+    if let Some(parsed) = parse_accel(&compact) {
+        return Ok(format_accel(&parsed));
+    }
+    if is_modifier_only_accel(&compact) {
         return Ok(compact);
     }
     Err("请输入有效快捷键，如 Ctrl+Alt+K；清空则表示未设置".into())
@@ -3634,6 +3669,11 @@ enum AppConfigTarget {
     JsonPointer {
         path: PathBuf,
         pointer: &'static str,
+    },
+    PixPinShortcut {
+        path: PathBuf,
+        key: &'static str,
+        nested_shortcut: bool,
     },
     EverythingIni {
         path: PathBuf,
@@ -3759,22 +3799,25 @@ fn app_config_target_for_id(id: &str) -> Result<AppConfigTarget, String> {
         }
         "app_config.pixpin.screenshot" => {
             env_path("LOCALAPPDATA", r"PixPin\Config\PixPinConfig.json").map(|path| {
-                AppConfigTarget::JsonPointer {
+                AppConfigTarget::PixPinShortcut {
                     path,
-                    pointer: "/Action.Screenshot#s.win/v/shortCut",
+                    key: "Action.Screenshot#s.win",
+                    nested_shortcut: true,
                 }
             })
         }
         "app_config.pixpin.pin" => env_path("LOCALAPPDATA", r"PixPin\Config\PixPinConfig.json")
-            .map(|path| AppConfigTarget::JsonPointer {
+            .map(|path| AppConfigTarget::PixPinShortcut {
                 path,
-                pointer: "/Action.Pin#s.win/v/shortCut",
+                key: "Action.Pin#s.win",
+                nested_shortcut: true,
             }),
         "app_config.pixpin.bi_shortcut_4" => {
             env_path("LOCALAPPDATA", r"PixPin\Config\PixPinConfig.json").map(|path| {
-                AppConfigTarget::JsonPointer {
+                AppConfigTarget::PixPinShortcut {
                     path,
-                    pointer: "/BIShortcut.pixpin.4#s.win/v",
+                    key: "BIShortcut.pixpin.4#s.win",
+                    nested_shortcut: false,
                 }
             })
         }
@@ -3884,6 +3927,46 @@ fn set_json_pointer_string(
     }
     *slot = serde_json::Value::String(accelerator);
     Ok(())
+}
+
+fn update_pixpin_shortcut(
+    path: &Path,
+    key: &str,
+    nested_shortcut: bool,
+    accelerator: String,
+) -> Result<(), String> {
+    let mut value = read_json_value(path).ok_or_else(|| "无法读取 PixPin 配置文件".to_string())?;
+    let Some(root) = value.as_object_mut() else {
+        return Err("PixPin 配置不是对象，已取消写入".into());
+    };
+    let entry = root
+        .entry(key.to_string())
+        .or_insert_with(|| serde_json::Value::Object(serde_json::Map::new()));
+    let Some(entry_obj) = entry.as_object_mut() else {
+        return Err("PixPin 配置条目不是对象，已取消写入".into());
+    };
+
+    if nested_shortcut {
+        let shortcut_value = entry_obj
+            .entry("v".to_string())
+            .or_insert_with(|| serde_json::Value::Object(serde_json::Map::new()));
+        let Some(shortcut_obj) = shortcut_value.as_object_mut() else {
+            return Err("PixPin 快捷键字段不是对象，已取消写入".into());
+        };
+        shortcut_obj.insert(
+            "shortCut".to_string(),
+            serde_json::Value::String(accelerator),
+        );
+    } else {
+        entry_obj.insert("v".to_string(), serde_json::Value::String(accelerator));
+    }
+
+    entry_obj.insert(
+        "t".to_string(),
+        serde_json::Value::Number(serde_json::Number::from((now_ms() / 1000) as u64)),
+    );
+    let data = serde_json::to_string_pretty(&value).map_err(|e| format!("serialize: {e}"))?;
+    atomic_write_json(path, &data)
 }
 
 fn update_jsonc_array_key(path: &Path, index: usize, accelerator: String) -> Result<(), String> {
@@ -4281,6 +4364,93 @@ fn observer_last() -> &'static Mutex<Option<ObservedHotkeySample>> {
 }
 
 #[cfg(target_os = "windows")]
+fn remapper_runtime() -> &'static Mutex<HotkeyRemapperRuntime> {
+    HOTKEY_REMAP_RUNTIME.get_or_init(|| Mutex::new(HotkeyRemapperRuntime::default()))
+}
+
+#[cfg(target_os = "windows")]
+fn remapper_rules() -> &'static Mutex<Vec<AppHotkeyRemapRule>> {
+    HOTKEY_REMAP_RULES.get_or_init(|| Mutex::new(Vec::new()))
+}
+
+#[cfg(target_os = "windows")]
+pub fn start_hotkey_remapper(_app: &AppHandle) -> Result<(), String> {
+    refresh_hotkey_remap_rules()?;
+    {
+        let runtime = remapper_runtime()
+            .lock()
+            .map_err(|_| "hotkey remapper runtime poisoned".to_string())?;
+        if runtime.enabled {
+            return Ok(());
+        }
+    }
+
+    let (ready_tx, ready_rx) = mpsc::channel::<Result<u32, String>>();
+    thread::spawn(move || unsafe {
+        let thread_id = GetCurrentThreadId();
+        let hook = match SetWindowsHookExW(WH_KEYBOARD_LL, Some(keyboard_remapper_proc), None, 0) {
+            Ok(hook) => hook,
+            Err(e) => {
+                let _ = ready_tx.send(Err(format!("安装快捷键重映射失败：{e}")));
+                return;
+            }
+        };
+        let _ = ready_tx.send(Ok(thread_id));
+        let mut msg = Default::default();
+        while GetMessageW(&mut msg, None, 0, 0).as_bool() {}
+        let _ = UnhookWindowsHookEx(hook);
+    });
+
+    let thread_id = ready_rx
+        .recv()
+        .map_err(|_| "快捷键重映射启动失败".to_string())??;
+    let mut runtime = remapper_runtime()
+        .lock()
+        .map_err(|_| "hotkey remapper runtime poisoned".to_string())?;
+    runtime.enabled = true;
+    runtime.thread_id = thread_id;
+    Ok(())
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn start_hotkey_remapper(_app: &AppHandle) -> Result<(), String> {
+    Ok(())
+}
+
+#[cfg(target_os = "windows")]
+fn refresh_hotkey_remap_rules() -> Result<(), String> {
+    let mut rules = Vec::new();
+    if let Some(path) = env_path("LOCALAPPDATA", r"PixPin\Config\PixPinConfig.json") {
+        if let Some(value) = read_json_value(&path) {
+            if let Some(raw) = json_pointer_string(&value, "/BIShortcut.pixpin.4#s.win/v") {
+                if let (Ok(from_text), Some(to)) =
+                    (validate_app_config_accel(&raw), parse_accel("Ctrl+S"))
+                {
+                    if !from_text.trim().is_empty() {
+                        if let Some(from) = parse_accel(&from_text) {
+                            let block_original = from != to;
+                            if block_original {
+                                rules.push(AppHotkeyRemapRule {
+                                    process_name: "PixPin.exe",
+                                    from,
+                                    to,
+                                    block_original,
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    let mut slot = remapper_rules()
+        .lock()
+        .map_err(|_| "hotkey remapper rules poisoned".to_string())?;
+    *slot = rules;
+    Ok(())
+}
+
+#[cfg(target_os = "windows")]
 fn set_observer_enabled(app: &AppHandle, enabled: bool) -> Result<HotkeyObserverStatus, String> {
     if enabled {
         start_hotkey_observer(app)?;
@@ -4386,6 +4556,163 @@ fn stop_hotkey_observer() {
         runtime.enabled = false;
         runtime.thread_id = 0;
     }
+}
+
+#[cfg(target_os = "windows")]
+unsafe extern "system" fn keyboard_remapper_proc(
+    code: i32,
+    wparam: windows::Win32::Foundation::WPARAM,
+    lparam: windows::Win32::Foundation::LPARAM,
+) -> windows::Win32::Foundation::LRESULT {
+    if code >= 0 && (wparam.0 as u32 == WM_KEYDOWN || wparam.0 as u32 == WM_SYSKEYDOWN) {
+        let kb = *(lparam.0 as *const KBDLLHOOKSTRUCT);
+        if !keyboard_event_is_injected(&kb) {
+            if let Some(accelerator) = accelerator_from_vk(kb.vkCode) {
+                if let Some(front) = foreground_running_app() {
+                    if let Some(action) = remap_action_for(&front.process_name, &accelerator) {
+                        match action {
+                            HotkeyRemapAction::Remap { from, to } => {
+                                send_remapped_accelerator(&from, &to);
+                            }
+                            HotkeyRemapAction::Block => {}
+                        }
+                        return windows::Win32::Foundation::LRESULT(1);
+                    }
+                }
+            }
+        }
+    }
+    CallNextHookEx(None, code, wparam, lparam)
+}
+
+#[cfg(target_os = "windows")]
+fn keyboard_event_is_injected(kb: &KBDLLHOOKSTRUCT) -> bool {
+    (kb.flags.0 & 0x10) != 0
+}
+
+#[cfg(target_os = "windows")]
+fn remap_action_for(process_name: &str, accelerator: &str) -> Option<HotkeyRemapAction> {
+    let current = parse_accel(accelerator)?;
+    let rules = remapper_rules().lock().ok()?;
+    for rule in rules.iter() {
+        if !process_name.eq_ignore_ascii_case(rule.process_name) {
+            continue;
+        }
+        if current == rule.from {
+            return Some(HotkeyRemapAction::Remap {
+                from: rule.from.clone(),
+                to: rule.to.clone(),
+            });
+        }
+        if rule.block_original && current == rule.to {
+            return Some(HotkeyRemapAction::Block);
+        }
+    }
+    None
+}
+
+#[cfg(target_os = "windows")]
+fn send_remapped_accelerator(from: &NormalizedAccelerator, to: &NormalizedAccelerator) {
+    let mut inputs = Vec::new();
+    for vk in modifier_vks(from).into_iter().rev() {
+        if !modifier_vks(to).contains(&vk) && key_down(vk as i32) {
+            push_key_input(&mut inputs, vk, true);
+        }
+    }
+    for vk in modifier_vks(to) {
+        push_key_input(&mut inputs, vk, false);
+    }
+    if let Some(key_vk) = vk_for_normalized_key(&to.key) {
+        push_key_input(&mut inputs, key_vk, false);
+        push_key_input(&mut inputs, key_vk, true);
+    }
+    for vk in modifier_vks(to).into_iter().rev() {
+        push_key_input(&mut inputs, vk, true);
+    }
+    if !inputs.is_empty() {
+        unsafe {
+            let _ = SendInput(&inputs, size_of::<INPUT>() as i32);
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn modifier_vks(accel: &NormalizedAccelerator) -> Vec<u16> {
+    let mut out = Vec::new();
+    if accel.win {
+        out.push(VK_LWIN.0);
+    }
+    if accel.ctrl {
+        out.push(VK_CONTROL.0);
+    }
+    if accel.alt {
+        out.push(VK_MENU.0);
+    }
+    if accel.shift {
+        out.push(VK_SHIFT.0);
+    }
+    out
+}
+
+#[cfg(target_os = "windows")]
+fn vk_for_normalized_key(key: &NormalizedKey) -> Option<u16> {
+    match key {
+        NormalizedKey::Char(c) if c.is_ascii_alphanumeric() => Some(*c as u16),
+        NormalizedKey::F(n) if (1..=24).contains(n) => Some(0x6F + *n as u16),
+        NormalizedKey::Space => Some(0x20),
+        NormalizedKey::Named(name) => match name.as_str() {
+            "Left" => Some(0x25),
+            "Up" => Some(0x26),
+            "Right" => Some(0x27),
+            "Down" => Some(0x28),
+            "Tab" => Some(0x09),
+            "Enter" => Some(0x0D),
+            "Esc" => Some(0x1B),
+            "Delete" => Some(0x2E),
+            "Backspace" => Some(0x08),
+            "Insert" => Some(0x2D),
+            "Home" => Some(0x24),
+            "End" => Some(0x23),
+            "PageUp" => Some(0x21),
+            "PageDown" => Some(0x22),
+            "PrintScreen" => Some(0x2C),
+            "Pause" => Some(0x13),
+            "NumLock" => Some(0x90),
+            ";" => Some(0xBA),
+            "=" => Some(0xBB),
+            "," => Some(0xBC),
+            "Minus" => Some(0xBD),
+            "." => Some(0xBE),
+            "/" => Some(0xBF),
+            "`" => Some(0xC0),
+            "[" => Some(0xDB),
+            "\\" => Some(0xDC),
+            "]" => Some(0xDD),
+            "'" => Some(0xDE),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn push_key_input(inputs: &mut Vec<INPUT>, vk: u16, key_up: bool) {
+    inputs.push(INPUT {
+        r#type: INPUT_KEYBOARD,
+        Anonymous: INPUT_0 {
+            ki: KEYBDINPUT {
+                wVk: VIRTUAL_KEY(vk),
+                wScan: 0,
+                dwFlags: if key_up {
+                    KEYEVENTF_KEYUP
+                } else {
+                    KEYBD_EVENT_FLAGS(0)
+                },
+                time: 0,
+                dwExtraInfo: 0,
+            },
+        },
+    });
 }
 
 #[cfg(target_os = "windows")]
@@ -4771,7 +5098,15 @@ pub fn app_config_hotkey_entry_update(
     accelerator: String,
 ) -> Result<bool, String> {
     let accelerator = validate_app_config_accel(&accelerator)?;
-    match app_config_target_for_id(&id)? {
+    let target = app_config_target_for_id(&id)?;
+    let refresh_remap = matches!(
+        &target,
+        AppConfigTarget::PixPinShortcut {
+            key: "BIShortcut.pixpin.4#s.win",
+            ..
+        }
+    );
+    match target {
         AppConfigTarget::JsonPointer { path, pointer } => {
             let mut value =
                 read_json_value(&path).ok_or_else(|| "无法读取应用配置文件".to_string())?;
@@ -4779,6 +5114,13 @@ pub fn app_config_hotkey_entry_update(
             let data =
                 serde_json::to_string_pretty(&value).map_err(|e| format!("serialize: {e}"))?;
             atomic_write_json(&path, &data)?;
+        }
+        AppConfigTarget::PixPinShortcut {
+            path,
+            key,
+            nested_shortcut,
+        } => {
+            update_pixpin_shortcut(&path, key, nested_shortcut, accelerator)?;
         }
         AppConfigTarget::EverythingIni {
             path,
@@ -4802,6 +5144,10 @@ pub fn app_config_hotkey_entry_update(
         AppConfigTarget::LocalOverride => {
             set_app_hotkey_override(&app, &id, accelerator)?;
         }
+    }
+    if refresh_remap {
+        #[cfg(target_os = "windows")]
+        start_hotkey_remapper(&app)?;
     }
     Ok(true)
 }

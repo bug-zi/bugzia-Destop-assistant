@@ -281,6 +281,20 @@ export interface SocialNotifySettings {
   show_content: boolean;
 }
 
+export interface DailySettings {
+  /** Morning digest: news + quote + trivia. */
+  push_enabled: boolean;
+  /** Local HH:mm time for the digest. */
+  push_time: string;
+  push_news: boolean;
+  push_quote: boolean;
+  push_trivia: boolean;
+  /** Nightly review of today's recorded activity. */
+  review_enabled: boolean;
+  /** Local HH:mm time for the review. */
+  review_time: string;
+}
+
 export interface AppSettings {
   appearance: AppearanceSettings;
   result: ResultAppearanceSettings;
@@ -293,6 +307,7 @@ export interface AppSettings {
   note: NoteSettings;
   agent_notify: AgentNotifySettings;
   social_notify: SocialNotifySettings;
+  daily: DailySettings;
   hotkey: HotkeySettings;
 }
 
@@ -404,7 +419,7 @@ export const DEFAULT_PET: PetSettings = {
   speech_lines: ["哼，终于想起我了？", "今天也要优雅一点。", "别乱点，我在看着你。", "做得不错。", "再陪我一会儿。"],
   x: -1,
   y: -1,
-  w: 210,
+  w: 230,
   h: 300,
 };
 
@@ -444,6 +459,16 @@ export const DEFAULT_SOCIAL_NOTIFY: SocialNotifySettings = {
   show_content: false,
 };
 
+export const DEFAULT_DAILY: DailySettings = {
+  push_enabled: true,
+  push_time: "09:00",
+  push_news: true,
+  push_quote: true,
+  push_trivia: true,
+  review_enabled: true,
+  review_time: "23:00",
+};
+
 export const DEFAULT_HOTKEY: HotkeySettings = {
   summon: "alt+space", // 召唤键；已显示时再按一次即隐藏（切换）
   note: "alt+n", // 便签键；有便签显示则收起，否则呼出，一条都没有则新建空白便签
@@ -463,6 +488,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   note: DEFAULT_NOTE,
   agent_notify: DEFAULT_AGENT_NOTIFY,
   social_notify: DEFAULT_SOCIAL_NOTIFY,
+  daily: DEFAULT_DAILY,
   hotkey: DEFAULT_HOTKEY,
 };
 
@@ -483,5 +509,6 @@ export interface SettingsPatch {
   note: NoteSettings;
   agent_notify: AgentNotifySettings;
   social_notify: SocialNotifySettings;
+  daily: DailySettings;
   hotkey: HotkeySettings;
 }

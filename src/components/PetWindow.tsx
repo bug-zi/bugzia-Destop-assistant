@@ -30,6 +30,7 @@ import {
   pickAgentNotifyLine,
   type PetAgentNotify,
 } from "../features/petAgent/petAgentNotify";
+import { PET_DAILY_NOTICE, type PetDailyNotice } from "../features/daily/daily";
 import {
   createPetMemory,
   rememberPetEvent,
@@ -77,7 +78,14 @@ const CHAT_AI_TIMEOUT_MS = 20_000;
 const CHAT_THINKING_LINE = "稍等，本女王正在想。";
 const AGENT_NOTIFY_RETRY_MS = 1_500;
 const AGENT_NOTIFY_PENDING_TTL_MS = 120_000;
+const DAILY_NOTICE_TTL_MS = 12_000;
 const PET_SOCIAL_NOTIFY = "pet:social-notify";
+const SPRITE_FRAME_W = 512;
+const SPRITE_FRAME_H = 724;
+const PET_MIN_W = 230;
+const PET_MIN_H = 220;
+const PET_WINDOW_PAD_X = 8;
+const PET_BODY_GAP = 4;
 
 const NOTICE_PRIORITY: Record<PetNoticePriority, number> = {
   ambient: 0,
@@ -207,6 +215,27 @@ interface PetSocialNotify {
   receivedAt: number;
 }
 
+interface PetViewport {
+  width: number;
+  height: number;
+}
+
+function measurePetViewport(): PetViewport {
+  return { width: window.innerWidth, height: window.innerHeight };
+}
+
+function getPetLookSize(viewport: PetViewport, chatOpen: boolean): PetViewport {
+  const bubbleH = chatOpen ? 132 : 106;
+  const maxW = Math.max(0, viewport.width - PET_WINDOW_PAD_X);
+  const maxH = Math.max(0, viewport.height - bubbleH - PET_BODY_GAP);
+  const fit = Math.min(maxW / SPRITE_FRAME_W, maxH / SPRITE_FRAME_H);
+  const scale = Number.isFinite(fit) && fit > 0 ? fit : 0;
+  return {
+    width: Math.round(SPRITE_FRAME_W * scale),
+    height: Math.round(SPRITE_FRAME_H * scale),
+  };
+}
+
 export default function PetWindow() {
   const [action, dispatch] = useReducer(petReducer, "idle");
   const actionSpec = ACTIONS[action];
@@ -249,6 +278,7 @@ export default function PetWindow() {
   const [chatPending, setChatPending] = useState(false);
   const [chatText, setChatText] = useState("");
   const [frame, setFrame] = useState(0);
+  const [viewport, setViewport] = useState<PetViewport>(() => measurePetViewport());
   const rootRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -259,6 +289,18 @@ export default function PetWindow() {
     actionRef.current = action;
     setFrame(0);
   }, [action]);
+
+  useEffect(() => {
+    const updateViewport = () => {
+      const next = measurePetViewport();
+      setViewport((current) =>
+        current.width === next.width && current.height === next.height ? current : next,
+      );
+    };
+    updateViewport();
+    window.addEventListener("resize", updateViewport);
+    return () => window.removeEventListener("resize", updateViewport);
+  }, []);
 
   useEffect(() => {
     const timer = window.setInterval(() => {
@@ -284,6 +326,11 @@ export default function PetWindow() {
       settingsRef.current = s.pet;
       setSettings(s.pet);
       agentNotifyRef.current = { ...DEFAULT_AGENT_NOTIFY, ...s.agent_notify };
+      void invoke("pet_enforce_min_size", {
+        minWidth: PET_MIN_W,
+        minHeight: PET_MIN_H,
+        alwaysOnTop: s.pet.always_on_top,
+      }).catch(() => {});
       dispatch({ type: "wave" });
       if (s.pet.speech_enabled) speak("startup");
     })();
@@ -383,6 +430,21 @@ export default function PetWindow() {
       un = await listen<PetSocialNotify>(PET_SOCIAL_NOTIFY, (ev) => {
         void invoke<boolean>("social_notify_ack").catch(() => {});
         reactToSocialNotify(ev.payload);
+      });
+      if (!alive && un) un();
+    })();
+    return () => {
+      alive = false;
+      un?.();
+    };
+  }, []);
+
+  useEffect(() => {
+    let un: UnlistenFn | undefined;
+    let alive = true;
+    (async () => {
+      un = await listen<PetDailyNotice>(PET_DAILY_NOTICE, (ev) => {
+        reactToDailyNotice(ev.payload);
       });
       if (!alive && un) un();
     })();
@@ -618,12 +680,13 @@ export default function PetWindow() {
   }
 
   function temporarilyRaiseForAgentNotify(ttlMs: number | null = BUBBLE_TTL_MS) {
-    if (settingsRef.current.always_on_top) return;
     if (agentNotifyTopTimerRef.current != null) {
       window.clearTimeout(agentNotifyTopTimerRef.current);
       agentNotifyTopTimerRef.current = null;
     }
-    void invoke("pet_set_always_on_top", { top: true }).catch(() => {});
+    if (!settingsRef.current.always_on_top) {
+      void invoke("pet_set_always_on_top", { top: false }).catch(() => {});
+    }
     if (ttlMs == null) return;
     agentNotifyTopTimerRef.current = window.setTimeout(() => {
       agentNotifyTopTimerRef.current = null;
@@ -946,6 +1009,25 @@ export default function PetWindow() {
       setSocialAction(payload);
       temporarilyRaiseForAgentNotify(null);
     }
+  }
+
+  function reactToDailyNotice(payload: PetDailyNotice) {
+    if (actionRef.current === "drag") return;
+    const text = payload.text.trim();
+    if (!text) return;
+
+    noteInteraction();
+    setAgentAction(null);
+    setSocialAction(null);
+    temporarilyRaiseForAgentNotify(DAILY_NOTICE_TTL_MS);
+    showPetNotice(
+      text,
+      payload.kind === "review" ? "curious" : "pleased",
+      "system",
+      payload.kind === "review" ? "curious" : "happy",
+      DAILY_NOTICE_TTL_MS,
+      "wake",
+    );
   }
 
   function playAiAction(aiAction: PetAiAction) {
@@ -1272,7 +1354,12 @@ export default function PetWindow() {
     finishDrag();
   }
 
-  const style = { "--scale": settings.scale } as CSSProperties;
+  const lookSize = getPetLookSize(viewport, chatOpen);
+  const style = {
+    "--scale": settings.scale,
+    "--pet-look-w": `${lookSize.width}px`,
+    "--pet-look-h": `${lookSize.height}px`,
+  } as CSSProperties;
   const sheetStyle = {
     width: `${actionSpec.frames * 100}%`,
     transform: `translateX(-${(frame * 100) / actionSpec.frames}%)`,

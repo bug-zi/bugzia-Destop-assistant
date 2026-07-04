@@ -1,7 +1,8 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { emit, listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import ChatView from "./ChatView";
 import FileResultsView from "./FileResultsView";
 import HistoryRail from "./HistoryRail";
@@ -19,8 +20,18 @@ import {
   type FileResult,
 } from "../features/result/resultTypes";
 import { loadSettings } from "../features/settings/settingsStore";
-import type { SettingsPatch } from "../features/settings/settingsTypes";
+import type { AppSettings, SettingsPatch } from "../features/settings/settingsTypes";
 import { applyAppearanceVars, applyResultVars } from "../features/appearance/appearance";
+import {
+  DAILY_DIGEST_CHANGED,
+  PET_DAILY_NOTICE,
+  appendDailyDigest,
+  listDailyDigests,
+  readDailyUsed,
+  type DailyDigestEntry,
+  type DailyPushDigest,
+  type PetDailyNotice,
+} from "../features/daily/daily";
 
 function logErr(label: string) {
   return (e: unknown) => console.error(`[bugzia] ${label}`, e);
@@ -85,6 +96,235 @@ function finalizeLastAssistant(
     }
   }
   return msgs;
+}
+
+function DailyDigestView() {
+  const [items, setItems] = useState<DailyDigestEntry[]>(() => listDailyDigests());
+  const [selectedDay, setSelectedDay] = useState<string | null>(() => {
+    const first = listDailyDigests()[0];
+    return first ? formatDailyDayKey(first.at) : null;
+  });
+  const [pushing, setPushing] = useState(false);
+  const [pushError, setPushError] = useState("");
+  const dayGroups = useMemo(() => groupDailyEntries(items), [items]);
+  const activeDay = selectedDay && dayGroups.some((group) => group.key === selectedDay)
+    ? selectedDay
+    : dayGroups[0]?.key ?? null;
+  const activeGroup = dayGroups.find((group) => group.key === activeDay) ?? null;
+
+  async function handlePushNow() {
+    if (pushing) return;
+    setPushing(true);
+    setPushError("");
+    try {
+      const settings = await loadSettings();
+      const used = readDailyUsed();
+      const digest = await invoke<DailyPushDigest>("daily_push_digest", {
+        excludeNewsKeys: used.newsKeys,
+        excludeQuoteIndices: used.quoteIndices,
+        excludeTriviaIndices: used.triviaIndices,
+      });
+      const entry = buildDailyDigestEntry(digest, settings.daily);
+      if (!entry) {
+        setPushError("当前没有可推送的新内容");
+        return;
+      }
+      const saved = appendDailyDigest(entry);
+      setItems(listDailyDigests());
+      setSelectedDay(formatDailyDayKey(saved.at));
+      emit(DAILY_DIGEST_CHANGED).catch(logErr("result emit daily changed"));
+      await emitDailyNotice("push", formatDailyPushNotice(saved));
+    } catch (e) {
+      logErr("daily push now")(e);
+      setPushError("推送失败，请稍后再试");
+    } finally {
+      setPushing(false);
+    }
+  }
+
+  useEffect(() => {
+    let alive = true;
+    let un: UnlistenFn | undefined;
+    (async () => {
+      un = await listen(DAILY_DIGEST_CHANGED, () => {
+        if (alive) setItems(listDailyDigests());
+      });
+      if (!alive && un) un();
+    })();
+    return () => {
+      alive = false;
+      un?.();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (dayGroups.length === 0) {
+      if (selectedDay !== null) setSelectedDay(null);
+      return;
+    }
+    if (!selectedDay || !dayGroups.some((group) => group.key === selectedDay)) {
+      setSelectedDay(dayGroups[0].key);
+    }
+  }, [dayGroups, selectedDay]);
+
+  const pushButton = (
+    <button
+      className="daily-push-btn"
+      type="button"
+      onClick={() => void handlePushNow()}
+      disabled={pushing}
+    >
+      {pushing ? "推送中..." : "立即推送"}
+    </button>
+  );
+
+  return (
+    <div className="daily-view">
+      <aside className="daily-rail">
+        <div className="daily-rail-head">每日</div>
+        <div className="daily-day-list">
+          {dayGroups.length === 0 ? (
+            <div className="daily-rail-empty">暂无日期</div>
+          ) : (
+            dayGroups.map((group) => (
+              <button
+                className={"daily-day-item" + (group.key === activeDay ? " active" : "")}
+                type="button"
+                key={group.key}
+                onClick={() => setSelectedDay(group.key)}
+                aria-pressed={group.key === activeDay}
+              >
+                <span className="daily-day-key">{group.key}</span>
+                <span className="daily-day-meta">{group.entries.length} 次推送</span>
+              </button>
+            ))
+          )}
+        </div>
+      </aside>
+      <section className="daily-content">
+        <div className="daily-page-actions">
+          {pushButton}
+          {pushError ? <span className="daily-push-error">{pushError}</span> : null}
+        </div>
+        {!activeGroup ? (
+          <div className="daily-empty">暂无每日推送</div>
+        ) : (
+          <div className="daily-scroll">
+            {activeGroup.entries.map((entry) => (
+              <article className="daily-entry" key={entry.id}>
+                <div className="daily-entry-time">{formatDigestTime(entry.at)}</div>
+                {entry.news.length > 0 && (
+                  <div className="daily-section">
+                    <div className="daily-section-title">新闻</div>
+                    <ul className="daily-news-list">
+                      {entry.news.map((item) => (
+                        <li key={item.key} className="daily-news-item">
+                          <a
+                            href={item.link}
+                            onClick={(e) => {
+                              e.preventDefault();
+                              if (item.link) openUrl(item.link).catch(() => undefined);
+                            }}
+                          >
+                            {item.title}
+                          </a>
+                          {item.summary ? (
+                            <span className="daily-news-summary">{item.summary}</span>
+                          ) : null}
+                          <span className="daily-news-meta">
+                            {[item.source, item.publishedAt].filter(Boolean).join(" · ")}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+                {entry.quote && (
+                  <div className="daily-section">
+                    <div className="daily-section-title">名言</div>
+                    <div className="daily-text">{entry.quote}</div>
+                  </div>
+                )}
+                {entry.trivia && (
+                  <div className="daily-section">
+                    <div className="daily-section-title">冷知识</div>
+                    <div className="daily-text">{entry.trivia}</div>
+                  </div>
+                )}
+              </article>
+            ))}
+          </div>
+        )}
+      </section>
+    </div>
+  );
+}
+
+interface DailyDayGroup {
+  key: string;
+  entries: DailyDigestEntry[];
+}
+
+function groupDailyEntries(entries: DailyDigestEntry[]): DailyDayGroup[] {
+  const groups = new Map<string, DailyDigestEntry[]>();
+  for (const entry of entries) {
+    const key = formatDailyDayKey(entry.at);
+    groups.set(key, [...(groups.get(key) ?? []), entry]);
+  }
+  return [...groups.entries()]
+    .map(([key, grouped]) => ({
+      key,
+      entries: grouped.sort((a, b) => b.at - a.at),
+    }))
+    .sort((a, b) => b.key.localeCompare(a.key));
+}
+
+function buildDailyDigestEntry(
+  digest: DailyPushDigest,
+  daily: AppSettings["daily"],
+): Omit<DailyDigestEntry, "id"> | null {
+  const entry: Omit<DailyDigestEntry, "id"> = {
+    at: Date.now(),
+    news: daily.push_news ? digest.news : [],
+    quote: daily.push_quote ? digest.quote : null,
+    quoteIndex: daily.push_quote ? digest.quoteIndex : null,
+    trivia: daily.push_trivia ? digest.trivia : null,
+    triviaIndex: daily.push_trivia ? digest.triviaIndex : null,
+  };
+  if (entry.news.length === 0 && !entry.quote && !entry.trivia) return null;
+  return entry;
+}
+
+async function emitDailyNotice(kind: PetDailyNotice["kind"], text: string) {
+  const payload: PetDailyNotice = {
+    kind,
+    text,
+    receivedAt: Date.now(),
+  };
+  await emit(PET_DAILY_NOTICE, payload);
+}
+
+function formatDailyPushNotice(entry: DailyDigestEntry): string {
+  const bits = [];
+  if (entry.news.length > 0) bits.push(`${entry.news.length} 条新闻`);
+  if (entry.quote) bits.push("名言");
+  if (entry.trivia) bits.push("冷知识");
+  return `给你放好新的每日推送啦：${bits.join("、")}`;
+}
+
+function formatDigestTime(ms: number): string {
+  return new Date(ms).toLocaleTimeString("zh-CN", {
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+function formatDailyDayKey(ms: number): string {
+  const d = new Date(ms);
+  const yy = String(d.getFullYear() % 100).padStart(2, "0");
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  return `${yy}${mm}${dd}`;
 }
 
 /**
@@ -152,6 +392,7 @@ export default function ResultWindow() {
           setFileResults(ev.payload.fileResults);
           setFileQuery(ev.payload.fileQuery);
           setSearching(ev.payload.searching);
+          if (ev.payload.mode === "daily") setHistoryOpen(false);
         }),
       );
       offs.push(
@@ -160,6 +401,7 @@ export default function ResultWindow() {
           // without clobbering the in-flight stream a full replay would.
           if (!hydratedRef.current) return;
           setMode(ev.payload.mode);
+          if (ev.payload.mode === "daily") setHistoryOpen(false);
         }),
       );
       offs.push(
@@ -266,6 +508,18 @@ export default function ResultWindow() {
   }
 
   const isFile = mode === "file";
+  const isDaily = mode === "daily";
+  const title = isFile ? "文件结果" : isDaily ? "每日推送" : historyOpen ? "历史对话" : "AI 对话";
+
+  function handleHistoryClick() {
+    if (isFile) return;
+    if (isDaily) {
+      setMode("chat");
+      setHistoryOpen(true);
+      return;
+    }
+    setHistoryOpen((v) => !v);
+  }
 
   return (
     <div className="result-card">
@@ -273,14 +527,26 @@ export default function ResultWindow() {
         {/* Dedicated drag grip — a SIBLING of the buttons, never an ancestor,
             so button mousedowns are never swallowed by window drag. */}
         <div className="result-grip" data-tauri-drag-region title="拖动结果窗口" />
-        <span className="result-title">{isFile ? "文件结果" : "AI 对话"}</span>
+        <span className="result-title">{title}</span>
         <div className="result-actions">
           <button
             className="result-btn"
             type="button"
-            onClick={() => setHistoryOpen((v) => !v)}
+            onClick={() => {
+              setHistoryOpen(false);
+              setMode(isDaily ? "chat" : "daily");
+            }}
+            aria-pressed={isDaily}
+            title="每日推送"
+          >
+            每日
+          </button>
+          <button
+            className="result-btn"
+            type="button"
+            onClick={handleHistoryClick}
             disabled={isFile}
-            aria-pressed={historyOpen}
+            aria-pressed={historyOpen && !isDaily}
             title="历史对话"
           >
             历史
@@ -304,8 +570,14 @@ export default function ResultWindow() {
           </button>
         </div>
       </div>
-      <div className={"result-body" + (historyOpen && !isFile ? " with-rail" : "")}>
-        {historyOpen && !isFile ? <HistoryRail /> : null}
+      <div
+        className={
+          "result-body" +
+          (historyOpen && !isFile && !isDaily ? " with-rail" : "") +
+          (isDaily ? " daily-body" : "")
+        }
+      >
+        {historyOpen && !isFile && !isDaily ? <HistoryRail /> : null}
         {isFile ? (
           <FileResultsView
             query={fileQuery}
@@ -315,13 +587,17 @@ export default function ResultWindow() {
             onReveal={(p) => invoke("reveal_file", { path: p }).catch(logErr("reveal_file"))}
           />
         ) : (
-          <ChatView
-            messages={messages}
-            generating={generating}
-            onStop={() => emit(EV.COMMAND_STOP_CHAT).catch(logErr("result emit stop"))}
-            onClear={() => emit(EV.COMMAND_CLEAR_CONTEXT).catch(logErr("result emit clear"))}
-            onNew={() => emit(EV.COMMAND_NEW_CONVERSATION).catch(logErr("result emit new"))}
-          />
+          isDaily ? (
+            <DailyDigestView />
+          ) : (
+            <ChatView
+              messages={messages}
+              generating={generating}
+              onStop={() => emit(EV.COMMAND_STOP_CHAT).catch(logErr("result emit stop"))}
+              onClear={() => emit(EV.COMMAND_CLEAR_CONTEXT).catch(logErr("result emit clear"))}
+              onNew={() => emit(EV.COMMAND_NEW_CONVERSATION).catch(logErr("result emit new"))}
+            />
+          )
         )}
       </div>
     </div>

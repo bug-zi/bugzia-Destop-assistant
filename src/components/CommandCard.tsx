@@ -55,6 +55,27 @@ import {
 import { EV, type FileResult, type ResultMode } from "../features/result/resultTypes";
 import { PET_INPUT_PREVIEW } from "../features/petAgent/petInput";
 import {
+  DAILY_DIGEST_CHANGED,
+  PET_DAILY_NOTICE,
+  appendDailyDigest,
+  activityKindLabel,
+  compactDetail,
+  hasDailyFired,
+  hasPushSlotFired,
+  markDailyFired,
+  markPushSlotFired,
+  msUntilNextLocalTime,
+  msUntilNextTwoHourSlot,
+  readDailyActivities,
+  readDailyUsed,
+  rememberDailyActivity,
+  todayStartMs,
+  type DailyActivity,
+  type DailyDigestEntry,
+  type DailyPushDigest,
+  type PetDailyNotice,
+} from "../features/daily/daily";
+import {
   emitSlashPaletteState,
   hideSlashPaletteWindow,
   onSlashPaletteAccept,
@@ -203,6 +224,7 @@ export default function CommandCard() {
   // 不依赖 OS 窗口焦点（便笺是无框透明窗，焦点语义不可靠），只认主窗口自己掌握的状态。
   const activeNoteIdRef = useRef<string | null>(null);
   const notesSaveTimer = useRef<number | null>(null);
+  const noteActivityLogAtRef = useRef<Record<string, number>>({});
 
   /** Commit new settings to state + ref + debounced persistence. */
   const update = useCallback((next: AppSettings) => {
@@ -418,6 +440,7 @@ export default function CommandCard() {
           note: ev.payload.note ?? cur.note,
           agent_notify: ev.payload.agent_notify ?? cur.agent_notify,
           social_notify: ev.payload.social_notify ?? cur.social_notify,
+          daily: ev.payload.daily ?? cur.daily,
           hotkey: ev.payload.hotkey ?? cur.hotkey,
         };
         update(merged);
@@ -467,6 +490,49 @@ export default function CommandCard() {
     void invoke("social_notify_start", { cfg }).catch(logErr("social_notify_start"));
   }, [settings?.social_notify]);
 
+  useEffect(() => {
+    const daily = settings?.daily;
+    if (!daily) return;
+    let cancelled = false;
+    let pushTimer: number | null = null;
+    let reviewTimer: number | null = null;
+
+    const schedulePush = () => {
+      if (!daily.push_enabled) return;
+      pushTimer = window.setTimeout(() => {
+        if (cancelled) return;
+        void runDailyPush().finally(() => {
+          if (!cancelled) schedulePush();
+        });
+      }, msUntilNextTwoHourSlot());
+    };
+
+    const scheduleReview = () => {
+      if (!daily.review_enabled) return;
+      reviewTimer = window.setTimeout(() => {
+        if (cancelled) return;
+        void runDailyReview().finally(() => {
+          if (!cancelled) scheduleReview();
+        });
+      }, msUntilNextLocalTime(daily.review_time));
+    };
+
+    schedulePush();
+    scheduleReview();
+    return () => {
+      cancelled = true;
+      if (pushTimer != null) window.clearTimeout(pushTimer);
+      if (reviewTimer != null) window.clearTimeout(reviewTimer);
+    };
+  }, [
+    settings?.daily.push_enabled,
+    settings?.daily.push_news,
+    settings?.daily.push_quote,
+    settings?.daily.push_trivia,
+    settings?.daily.review_enabled,
+    settings?.daily.review_time,
+  ]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // ── result window -> main: chat control + lifecycle + ready-handshake ──
   useEffect(() => {
     const offs: UnlistenFn[] = [];
@@ -478,6 +544,7 @@ export default function CommandCard() {
       );
       offs.push(
         await listen(EV.COMMAND_CLEAR_CONTEXT, () => {
+          rememberDailyActivity("history", "清空当前对话上下文");
           // Keep original behavior (wipe context + screen); additionally rotate
           // activeId so the next turn starts a new record instead of clobbering
           // the just-saved one.
@@ -492,6 +559,7 @@ export default function CommandCard() {
       offs.push(
         await listen(EV.COMMAND_NEW_CONVERSATION, async () => {
           if (generatingRef.current) return;
+          rememberDailyActivity("history", "新建对话");
           // Flush the current conversation (in case a debounced save hadn't
           // fired), then rotate to a brand-new one.
           await persistActive();
@@ -514,6 +582,7 @@ export default function CommandCard() {
           const id = ev.payload.id;
           try {
             const msgs = await getConversation(id);
+            rememberDailyActivity("history", `恢复历史对话：${msgs[0]?.content ?? id}`);
             activeIdRef.current = id;
             setMessages(msgs);
             // Sync the ref immediately: emitReplay() below reads messagesRef,
@@ -818,6 +887,12 @@ export default function CommandCard() {
             n.id === ev.payload.id ? { ...n, content: ev.payload.content } : n,
           );
           activeNoteIdRef.current = ev.payload.id; // 编辑过 = 当前便笺
+          const now = Date.now();
+          const last = noteActivityLogAtRef.current[ev.payload.id] ?? 0;
+          if (now - last > 60_000) {
+            noteActivityLogAtRef.current[ev.payload.id] = now;
+            rememberDailyActivity("note-edit", ev.payload.content || "编辑空白便笺");
+          }
           scheduleNotesSave();
         }),
       );
@@ -826,12 +901,14 @@ export default function CommandCard() {
           notesRef.current = notesRef.current.map((n) =>
             n.id === ev.payload.id ? { ...n, pinned: ev.payload.pinned } : n,
           );
+          rememberDailyActivity("note-pin", ev.payload.pinned ? "钉住便笺" : "取消钉住便笺");
           void setNoteLayer(ev.payload.id, ev.payload.pinned).catch(logErr("note set_layer"));
           scheduleNotesSave();
         }),
       );
       offs.push(
         await listen<{ id: string }>(NOTE_DESTROYED, (ev) => {
+          rememberDailyActivity("note-destroy", "销毁便笺");
           destroyNoteById(ev.payload.id);
         }),
       );
@@ -1048,6 +1125,7 @@ export default function CommandCard() {
   /** Drive a `/file` search: flip the overlay to file mode, show a searching
    *  state, run the (blocking) walk off-thread, then push the results. */
   async function runFileSearch(query: string) {
+    rememberDailyActivity("file", query);
     setStatusText("搜索中");
     modeRef.current = "file";
     fileQueryRef.current = query;
@@ -1173,6 +1251,114 @@ export default function CommandCard() {
     }
   }
 
+  async function runDailyPush() {
+    const now = new Date();
+    const daily = settingsRef.current?.daily;
+    if (!daily?.push_enabled || hasPushSlotFired(now)) return;
+    try {
+      const used = readDailyUsed();
+      const digest = await invoke<DailyPushDigest>("daily_push_digest", {
+        excludeNewsKeys: used.newsKeys,
+        excludeQuoteIndices: used.quoteIndices,
+        excludeTriviaIndices: used.triviaIndices,
+      });
+      const entry = buildDailyDigestEntry(digest, daily);
+      if (!entry) return;
+      const saved = appendDailyDigest(entry);
+      modeRef.current = "daily";
+      await revealResult();
+      emit(EV.RESULT_SET_MODE, { mode: "daily" }).catch(logErr("emit set-mode"));
+      emit(DAILY_DIGEST_CHANGED).catch(logErr("emit daily changed"));
+      await emitDailyNotice("push", formatDailyPushNotice(saved));
+      markPushSlotFired(now);
+    } catch (e) {
+      logErr("daily push")(e);
+    }
+  }
+
+  async function runDailyReview() {
+    const now = new Date();
+    const daily = settingsRef.current?.daily;
+    if (!daily?.review_enabled || hasDailyFired("review", now)) return;
+    const text = await buildDailyReviewText();
+    await emitDailyNotice("review", text);
+    markDailyFired("review", now);
+  }
+
+  async function emitDailyNotice(kind: PetDailyNotice["kind"], text: string) {
+    const payload: PetDailyNotice = {
+      kind,
+      text,
+      receivedAt: Date.now(),
+    };
+    await emit(PET_DAILY_NOTICE, payload);
+  }
+
+  function buildDailyDigestEntry(
+    digest: DailyPushDigest,
+    daily: AppSettings["daily"],
+  ): Omit<DailyDigestEntry, "id"> | null {
+    const entry: Omit<DailyDigestEntry, "id"> = {
+      at: Date.now(),
+      news: daily.push_news ? digest.news : [],
+      quote: daily.push_quote ? digest.quote : null,
+      quoteIndex: daily.push_quote ? digest.quoteIndex : null,
+      trivia: daily.push_trivia ? digest.trivia : null,
+      triviaIndex: daily.push_trivia ? digest.triviaIndex : null,
+    };
+    if (entry.news.length === 0 && !entry.quote && !entry.trivia) return null;
+    return entry;
+  }
+
+  function formatDailyPushNotice(entry: DailyDigestEntry): string {
+    const bits = [];
+    if (entry.news.length > 0) bits.push(`${entry.news.length} 条新闻`);
+    if (entry.quote) bits.push("名言");
+    if (entry.trivia) bits.push("冷知识");
+    return `给你放好新的每日推送啦：${bits.join("、")}`;
+  }
+
+  async function buildDailyReviewText(): Promise<string> {
+    const activities = readDailyActivities();
+    const since = todayStartMs();
+    const conversations = await listConversations().catch(() => []);
+    const todayConvs = conversations.filter((c) => c.updatedAt >= since);
+    const pinnedNotes = notesRef.current.filter((n) => n.pinned);
+    const tempNotes = notesRef.current.length - pinnedNotes.length;
+    const parts = ["每日复盘"];
+
+    parts.push(summarizeActivities(activities));
+    if (todayConvs.length > 0) {
+      const titles = todayConvs.slice(0, 2).map((c) => compactDetail(c.title, 18)).join("、");
+      parts.push(`对话：今天更新 ${todayConvs.length} 个，${titles}`);
+    }
+    if (notesRef.current.length > 0) {
+      parts.push(`便笺：当前 ${notesRef.current.length} 张，钉住 ${pinnedNotes.length} 张，临时 ${tempNotes} 张`);
+    }
+    parts.push("明天先挑一件最小的事开局。");
+    return parts.join(" · ");
+  }
+
+  function summarizeActivities(activities: DailyActivity[]): string {
+    if (activities.length === 0) return "今天还没记录到可复盘行动";
+
+    const counts = new Map<DailyActivity["kind"], number>();
+    for (const item of activities) {
+      counts.set(item.kind, (counts.get(item.kind) ?? 0) + 1);
+    }
+    const top = [...counts.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 3)
+      .map(([kind, count]) => `${activityKindLabel(kind)} ${count} 次`)
+      .join("、");
+    const recent = activities
+      .slice(-3)
+      .map((item) => compactDetail(item.detail, 18))
+      .filter(Boolean)
+      .join("；");
+    return `行动：共 ${activities.length} 条${top ? `，最多是 ${top}` : ""}${recent ? `，最近：${recent}` : ""}`;
+  }
+
   /** Destroy one note by id after the note window has confirmed deletion. */
   function destroyNoteById(id: string) {
     notesRef.current = notesRef.current.filter((n) => n.id !== id);
@@ -1212,6 +1398,7 @@ export default function CommandCard() {
     notesRef.current = [...notesRef.current, record];
     await createNoteWindow(record, { w: s.w, h: s.h }, notesRef.current).catch(logErr("create note"));
     activeNoteIdRef.current = record.id; // 新建即"当前便笺"，note_destroy 优先命中它
+    rememberDailyActivity("note", text || "新建空白便笺");
     // 钉住的便笺纳入 notes.json（重启恢复）；临时便笺只在内存，退出即消失。
     if (pinned) scheduleNotesSave();
     setStatusText("已生成便笺");
@@ -1291,6 +1478,7 @@ export default function CommandCard() {
     // early return below.
     if (mode === "help") {
       setValue("");
+      rememberDailyActivity("help", "查看命令列表");
       void runAssistantOnce("命令列表", () => Promise.resolve(renderHelpMarkdown()), "生成中");
       return;
     }
@@ -1315,6 +1503,7 @@ export default function CommandCard() {
     setValue("");
 
     if (mode === "web") {
+      rememberDailyActivity("web", query);
       browserSearch(query, resolveEngine()).catch(logErr("web search"));
       setStatusText("已打开浏览器搜索");
       return;
@@ -1324,6 +1513,7 @@ export default function CommandCard() {
       return;
     }
     if (mode === "weather") {
+      rememberDailyActivity("weather", query);
       void runAssistantOnce(
         query,
         () => invoke<string>("weather", { city: query }),
@@ -1332,6 +1522,7 @@ export default function CommandCard() {
       return;
     }
     if (mode === "trans") {
+      rememberDailyActivity("trans", query);
       // Dictionary-style: all senses + example sentences. Direction defaults to
       // Chinese <-> English; an explicit target stated in the input (e.g.
       // "翻译成日语", "into French") overrides it. Streams token-by-token via
@@ -1352,6 +1543,7 @@ export default function CommandCard() {
     // result overlay, then stream — updating the mirror AND forwarding to it.
     // Flip back to chat in case the overlay is showing file results.
     modeRef.current = "chat";
+    rememberDailyActivity("ai", query);
     setMessages((m) => [
       ...m,
       { role: "user", content: query },
@@ -1421,6 +1613,7 @@ export default function CommandCard() {
   }
 
   async function handleOpenSettings() {
+    rememberDailyActivity("settings", "打开设置");
     // Opening settings while an unpinned result is visible would clash (§13.5).
     if ((await isResultVisible()) && !pinnedRef.current) {
       await concealResult();
