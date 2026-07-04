@@ -66,6 +66,11 @@ interface SupplementEditTarget {
   token: number;
 }
 
+interface HotkeySearchResult {
+  entry: HotkeyEntry;
+  hidden: boolean;
+}
+
 const TABS: { key: Tab; label: string }[] = [
   { key: "overview", label: "总览" },
   { key: "conflicts", label: "冲突" },
@@ -91,6 +96,7 @@ export default function HotkeyCenterPanel({ hotkey, onPatchHotkey, hkErr, setHkE
   const [hiddenShortcuts, setHiddenShortcuts] = useState<ShortcutHotkeyItem[]>([]);
   const [shortcutsLoaded, setShortcutsLoaded] = useState(false);
   const [supplementEditTarget, setSupplementEditTarget] = useState<SupplementEditTarget | null>(null);
+  const [searchQuery, setSearchQuery] = useState("");
   const [busy, setBusy] = useState(false);
 
   // 总览数据：挂载 + Bugzia 快捷键变化时刷新（后者让冲突徽标跟上输入框编辑）。
@@ -156,6 +162,25 @@ export default function HotkeyCenterPanel({ hotkey, onPatchHotkey, hkErr, setHkE
     const modifiable = entries.filter((e) => e.can_modify).length;
     return { total, conflicts, overrides, modifiable };
   }, [entries]);
+  const activeSearchQuery = searchQuery.trim();
+  const searchResults = useMemo<HotkeySearchResult[]>(() => {
+    const q = activeSearchQuery.toLowerCase();
+    if (!q) return [];
+    const seen = new Set<string>();
+    const result: HotkeySearchResult[] = [];
+    for (const item of [
+      { list: entries, hidden: false },
+      { list: hiddenEntries, hidden: true },
+    ]) {
+      for (const entry of item.list) {
+        if (seen.has(entry.id)) continue;
+        if (!entrySearchText(entry).includes(q)) continue;
+        seen.add(entry.id);
+        result.push({ entry, hidden: item.hidden });
+      }
+    }
+    return result;
+  }, [activeSearchQuery, entries, hiddenEntries]);
 
   function openSupplementEditor(entry: HotkeyEntry) {
     setSupplementEditTarget({ entry, token: Date.now() + Math.random() });
@@ -165,92 +190,107 @@ export default function HotkeyCenterPanel({ hotkey, onPatchHotkey, hkErr, setHkE
   return (
     <section className="settings-section hk-panel">
       <h4>快捷键中心</h4>
-      <div className="hk-tabs">
-        {TABS.map((t) => (
-          <button
-            key={t.key}
-            type="button"
-            className={"hk-tab" + (tab === t.key ? " active" : "")}
-            onClick={() => setTab(t.key)}
-          >
-            {t.label}
-          </button>
-        ))}
+      <div className="hk-toolbar">
+        <div className="hk-tabs">
+          {TABS.map((t) => (
+            <button
+              key={t.key}
+              type="button"
+              className={"hk-tab" + (tab === t.key ? " active" : "")}
+              onClick={() => setTab(t.key)}
+            >
+              {t.label}
+            </button>
+          ))}
+        </div>
+        <input
+          className="f-input hk-global-search"
+          value={searchQuery}
+          placeholder="搜索快捷键 / 应用 / 功能"
+          aria-label="搜索快捷键中心"
+          onChange={(e) => setSearchQuery(e.target.value)}
+        />
       </div>
 
-      {tab === "overview" && (
-        <OverviewTab entries={entries} stats={stats} onJump={setTab} />
-      )}
+      {activeSearchQuery ? (
+        <SearchResultsTab query={activeSearchQuery} results={searchResults} />
+      ) : (
+        <>
+          {tab === "overview" && (
+            <OverviewTab entries={entries} stats={stats} onJump={setTab} />
+          )}
 
-      {tab === "conflicts" && (
-        <ConflictTab
-          entries={entries}
-          busy={busy}
-          setBusy={setBusy}
-          onChange={refreshEntries}
-          onJump={setTab}
-        />
-      )}
+          {tab === "conflicts" && (
+            <ConflictTab
+              entries={entries}
+              busy={busy}
+              setBusy={setBusy}
+              onChange={refreshEntries}
+              onJump={setTab}
+            />
+          )}
 
-      {tab === "bugzia" && (
-        <BugziaTab
-          hotkey={hotkey}
-          onPatchHotkey={onPatchHotkey}
-          hkErr={hkErr}
-          setHkErr={setHkErr}
-          byId={byId}
-          entries={entries}
-        />
-      )}
+          {tab === "bugzia" && (
+            <BugziaTab
+              hotkey={hotkey}
+              onPatchHotkey={onPatchHotkey}
+              hkErr={hkErr}
+              setHkErr={setHkErr}
+              byId={byId}
+              entries={entries}
+            />
+          )}
 
-      {tab === "windows" && (
-        <WindowsTab
-          entries={entries.filter((e) => e.source_type === "WindowsSystem")}
-          busy={busy}
-          setBusy={setBusy}
-          onChange={refreshEntries}
-        />
-      )}
+          {tab === "windows" && (
+            <WindowsTab
+              entries={entries.filter((e) => e.source_type === "WindowsSystem")}
+              busy={busy}
+              setBusy={setBusy}
+              onChange={refreshEntries}
+            />
+          )}
 
-      {tab === "manual" && (
-        <ManualTab
-          entries={entries.filter((e) => isApplicationHotkeySource(e.source_type))}
-          busy={busy}
-          setBusy={setBusy}
-          onChange={refreshEntries}
-          onEditEntry={openSupplementEditor}
-        />
-      )}
+          {tab === "manual" && (
+            <ManualTab
+              entries={entries.filter((e) => isApplicationHotkeySource(e.source_type))}
+              busy={busy}
+              setBusy={setBusy}
+              onChange={refreshEntries}
+              onEditEntry={openSupplementEditor}
+            />
+          )}
 
-      {tab === "shortcut" && (
-        <ShortcutTab
-          items={shortcuts}
-          hiddenItems={hiddenShortcuts}
-          byId={byId}
-          entries={entries}
-          busy={busy}
-          setBusy={setBusy}
-          onChange={refreshShortcuts}
-        />
-      )}
+          {tab === "shortcut" && (
+            <ShortcutTab
+              items={shortcuts}
+              hiddenItems={hiddenShortcuts}
+              byId={byId}
+              entries={entries}
+              busy={busy}
+              setBusy={setBusy}
+              onChange={refreshShortcuts}
+            />
+          )}
 
-      {tab === "supplement" && (
-        <SupplementTab
-          allEntries={entries}
-          editTarget={supplementEditTarget}
-          busy={busy}
-          setBusy={setBusy}
-          onChange={refreshEntries}
-        />
-      )}
+          {tab === "supplement" && (
+            <SupplementTab
+              allEntries={entries}
+              editTarget={supplementEditTarget}
+              busy={busy}
+              setBusy={setBusy}
+              onChange={refreshEntries}
+            />
+          )}
 
-      {tab === "hidden" && (
-        <HiddenTab
-          entries={hiddenEntries}
-          busy={busy}
-          setBusy={setBusy}
-          onChange={refreshEntries}
-        />
+          {tab === "hidden" && (
+            <HiddenTab
+              entries={hiddenEntries}
+              busy={busy}
+              setBusy={setBusy}
+              onChange={refreshEntries}
+            />
+          )}
+        </>
       )}
     </section>
   );
@@ -314,6 +354,45 @@ function OverviewTab({
   );
 }
 
+function SearchResultsTab({
+  query,
+  results,
+}: {
+  query: string;
+  results: HotkeySearchResult[];
+}) {
+  return (
+    <div className="hk-search-results">
+      <div className="hk-list">
+        {results.length === 0 && <div className="hk-empty">没有找到匹配“{query}”的快捷键。</div>}
+        {results.map(({ entry, hidden }) => (
+          <div className={"hk-item" + itemStateClass(entry)} key={`${hidden ? "hidden" : "visible"}.${entry.id}`}>
+            <div className="hk-item-main">
+              <div className="hk-item-name" title={entry.title}>
+                {entry.title}
+                {hidden && <span className="hk-status">（已隐藏）</span>}
+                {entry.manage_level === "HighRisk" && <span className="hk-status">（高风险）</span>}
+              </div>
+              <div className="hk-item-target">
+                {entry.app_name} / {sourceText(entry.source_type)} / {scopeText(entry.scope)}
+                {entry.process_name ? ` / ${entry.process_name}` : ""}
+                {entry.window_title_match ? ` / ${entry.window_title_match}` : ""}
+                {entry.target ? ` / ${entry.target}` : ""}
+                {entry.source_path ? ` / ${entry.source_path}` : ""}
+              </div>
+            </div>
+            <div className="hk-item-actions">
+              <span className="hk-kbd">{entry.display || "未设置"}</span>
+              <HotkeyStatusDot c={entry.conflict} active={Boolean(entry.display)} />
+              <span className="hk-src">{levelText(entry.manage_level)}</span>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 // ---------------------------------------------------------------------------
 // 冲突处理
 // ---------------------------------------------------------------------------
@@ -339,7 +418,9 @@ function ConflictTab({
       const key = e.display.toLowerCase();
       groups.set(key, [...(groups.get(key) ?? []), e]);
     }
-    return [...groups.values()].sort((a, b) => a[0].display.localeCompare(b[0].display));
+    return [...groups.values()]
+      .filter((group) => group.length > 1)
+      .sort((a, b) => a[0].display.localeCompare(b[0].display));
   }, [entries]);
   const systemOverrideGroups = useMemo(() => {
     const groups = new Map<string, HotkeyEntry[]>();
@@ -393,12 +474,13 @@ function ConflictTab({
 
         {duplicateGroups.map((group) => {
           const withBugzia = group.some((e) => e.source_type === "Bugzia");
+          const onlyBugzia = group.every((e) => e.source_type === "Bugzia");
           return (
             <div className="hk-conflict-group" key={group[0].display}>
               <div className="hk-conflict-head">
                 <span className="hk-kbd">{group[0].display}</span>
                 <span className={"hk-badge " + (withBugzia ? "bugzia" : "dup")}>
-                  {withBugzia ? "与 Bugzia 冲突" : "重复占用"}
+                  {onlyBugzia ? "Bugzia 内部重复" : withBugzia ? "与 Bugzia 冲突" : "重复占用"}
                 </span>
               </div>
               {group.map((e) => (
@@ -561,6 +643,25 @@ function HotkeyStatusDot({ c, active }: { c?: ConflictInfo; active: boolean }) {
           ? "已启用且无真正冲突"
           : "未启用且无真正冲突";
   return <span className={`hk-status-dot ${state}`} title={label} aria-label={label} />;
+}
+
+function entrySearchText(entry: HotkeyEntry): string {
+  return [
+    entry.display,
+    entry.title,
+    entry.app_name,
+    entry.process_name ?? "",
+    entry.window_title_match ?? "",
+    entry.source_path ?? "",
+    entry.target ?? "",
+    sourceText(entry.source_type),
+    scopeText(entry.scope),
+    levelText(entry.manage_level),
+    entry.can_modify ? "可编辑 可修改" : "只读",
+    entry.conflict.is_duplicate ? "冲突 重复占用" : "",
+    entry.conflict.is_system_override ? "覆盖系统 系统键覆盖" : "",
+    entry.conflict.conflicts_with_bugzia ? "Bugzia" : "",
+  ].join(" ").toLowerCase();
 }
 
 function keyNameForCapture(key: string): string | null {

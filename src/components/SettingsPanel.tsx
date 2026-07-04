@@ -27,11 +27,11 @@ import HotkeyCenterPanel from "./HotkeyCenterPanel";
  * `<section>` 的守卫一一对应,点叶项只渲染对应模块,不再长列表滚动。
  */
 const NAV: { title: string; leaves: { key: string; label: string }[] }[] = [
-  { title: "通用", leaves: [{ key: "card", label: "卡片" }, { key: "hotkeyCenter", label: "快捷键中心" }] },
+  { title: "通用", leaves: [{ key: "hotkeyCenter", label: "快捷键中心" }] },
   {
     title: "显示",
     leaves: [
-      { key: "appearance", label: "外观" },
+      { key: "appearance", label: "卡片" },
       { key: "result", label: "结果面板" },
       { key: "note", label: "便笺" },
     ],
@@ -85,7 +85,7 @@ export default function SettingsPanel({ settings, onChange, onClose }: SettingsP
   // (the main window reloads the hotkeys + emits `hotkey://error` on failure).
   const [hkErr, setHkErr] = useState<string | null>(null);
   // 当前选中的侧栏叶项 key;只渲染对应分区。
-  const [active, setActive] = useState("card");
+  const [active, setActive] = useState("appearance");
 
   useEffect(() => {
     let alive = true;
@@ -236,8 +236,18 @@ export default function SettingsPanel({ settings, onChange, onClose }: SettingsP
           </aside>
 
           <div className="settings-body">
+            {/* ── 快捷键中心 ── */}
+            {active === "hotkeyCenter" && (
+              <HotkeyCenterPanel
+                hotkey={hk}
+                onPatchHotkey={patchHotkey}
+                hkErr={hkErr}
+                setHkErr={setHkErr}
+              />
+            )}
+
             {/* ── 卡片 ── */}
-            {active === "card" && (
+            {active === "appearance" && (
               <section className="settings-section">
                 <h4>卡片</h4>
                 <label className="check-row">
@@ -254,23 +264,6 @@ export default function SettingsPanel({ settings, onChange, onClose }: SettingsP
                   </svg>
                   锁定位置与大小（锁定后无法拖动或拉伸卡片）
                 </label>
-              </section>
-            )}
-
-            {/* ── 快捷键中心 ── */}
-            {active === "hotkeyCenter" && (
-              <HotkeyCenterPanel
-                hotkey={hk}
-                onPatchHotkey={patchHotkey}
-                hkErr={hkErr}
-                setHkErr={setHkErr}
-              />
-            )}
-
-            {/* ── 外观 ── */}
-            {active === "appearance" && (
-              <section className="settings-section">
-                <h4>外观</h4>
                 <ColorField label="背景色"
                   r={a.bg_r} g={a.bg_g} b={a.bg_b}
                   onChange={(hex) => { const c = hexToRgb(hex); patchAppearance({ bg_r: c.r, bg_g: c.g, bg_b: c.b }); }} />

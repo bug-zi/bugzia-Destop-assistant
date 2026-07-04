@@ -1696,10 +1696,65 @@ fn env_path(var: &str, suffix: &str) -> Option<PathBuf> {
     std::env::var_os(var).map(|base| PathBuf::from(base).join(suffix))
 }
 
+fn everything_ini_path() -> Option<PathBuf> {
+    [
+        env_path("APPDATA", r"Everything\Everything.ini"),
+        env_path("LOCALAPPDATA", r"Everything\Everything.ini"),
+        Some(PathBuf::from(r"D:\app\工具箱\everything\Everything.ini")),
+        Some(PathBuf::from(r"C:\Program Files\Everything\Everything.ini")),
+    ]
+    .into_iter()
+    .flatten()
+    .find(|path| path.exists())
+}
+
 fn read_json_value(path: &Path) -> Option<serde_json::Value> {
     fs::read_to_string(path)
         .ok()
         .and_then(|s| serde_json::from_str(&s).ok())
+}
+
+fn strip_json_line_comments(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut chars = text.chars().peekable();
+    let mut in_string = false;
+    let mut escaped = false;
+    while let Some(ch) = chars.next() {
+        if in_string {
+            out.push(ch);
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == '"' {
+                in_string = false;
+            }
+            continue;
+        }
+        if ch == '"' {
+            in_string = true;
+            out.push(ch);
+            continue;
+        }
+        if ch == '/' && chars.peek() == Some(&'/') {
+            chars.next();
+            for next in chars.by_ref() {
+                if next == '\n' {
+                    out.push('\n');
+                    break;
+                }
+            }
+            continue;
+        }
+        out.push(ch);
+    }
+    out
+}
+
+fn read_jsonc_value(path: &Path) -> Option<serde_json::Value> {
+    fs::read_to_string(path)
+        .ok()
+        .and_then(|s| serde_json::from_str(&strip_json_line_comments(&s)).ok())
 }
 
 fn json_pointer_string(value: &serde_json::Value, pointer: &str) -> Option<String> {
@@ -1741,6 +1796,181 @@ fn app_config_entry(
         backup_available: false,
         conflict: ConflictInfo::default(),
     }
+}
+
+fn app_override_entry(
+    id: &str,
+    app_name: &str,
+    process_name: &str,
+    display: &str,
+    title: &str,
+    scope: HotkeyScope,
+    override_path: Option<&Path>,
+    source_hint: Option<&str>,
+    note: &str,
+    overrides: &HashMap<String, String>,
+) -> HotkeyEntry {
+    let mut target = note.to_string();
+    if let Some(source) = source_hint.map(str::trim).filter(|s| !s.is_empty()) {
+        target.push_str(" 原始来源：");
+        target.push_str(source);
+    }
+    HotkeyEntry {
+        id: id.to_string(),
+        display: overrides
+            .get(id)
+            .map(|value| value.trim().to_string())
+            .unwrap_or_else(|| display.trim().to_string()),
+        title: title.to_string(),
+        app_name: app_name.to_string(),
+        process_name: Some(process_name.to_string()),
+        window_title_match: None,
+        source_type: HotkeySourceType::AppConfig,
+        scope,
+        manage_level: ManageLevel::AdapterModify,
+        source_path: override_path.map(|path| path.to_string_lossy().to_string()),
+        target: Some(target),
+        can_modify: true,
+        backup_available: false,
+        conflict: ConflictInfo::default(),
+    }
+}
+
+struct EverythingKeySpec {
+    id: &'static str,
+    ini_key: &'static str,
+    title: &'static str,
+    preferred: Option<&'static str>,
+}
+
+const EVERYTHING_KEY_SPECS: &[EverythingKeySpec] = &[
+    EverythingKeySpec {
+        id: "app_builtin.everything.select_all",
+        ini_key: "edit_select_all_keys",
+        title: "全选",
+        preferred: Some("Ctrl+A"),
+    },
+    EverythingKeySpec {
+        id: "app_builtin.everything.copy",
+        ini_key: "edit_copy_keys",
+        title: "复制",
+        preferred: Some("Ctrl+C"),
+    },
+    EverythingKeySpec {
+        id: "app_builtin.everything.open",
+        ini_key: "file_open_keys",
+        title: "打开结果",
+        preferred: Some("Ctrl+Enter"),
+    },
+    EverythingKeySpec {
+        id: "app_builtin.everything.help",
+        ini_key: "help_everything_help_keys",
+        title: "帮助",
+        preferred: Some("F1"),
+    },
+    EverythingKeySpec {
+        id: "app_builtin.everything.new_window",
+        ini_key: "file_new_window_keys",
+        title: "新建窗口",
+        preferred: Some("Ctrl+N"),
+    },
+    EverythingKeySpec {
+        id: "app_builtin.everything.open_file",
+        ini_key: "file_open_file_list_keys",
+        title: "打开文件列表",
+        preferred: Some("Ctrl+O"),
+    },
+    EverythingKeySpec {
+        id: "app_builtin.everything.save",
+        ini_key: "file_export_keys",
+        title: "导出 / 保存结果列表",
+        preferred: Some("Ctrl+S"),
+    },
+    EverythingKeySpec {
+        id: "app_builtin.everything.paste",
+        ini_key: "edit_paste_keys",
+        title: "粘贴",
+        preferred: Some("Ctrl+V"),
+    },
+    EverythingKeySpec {
+        id: "app_builtin.everything.close",
+        ini_key: "file_close_window_keys",
+        title: "关闭窗口",
+        preferred: Some("Ctrl+W"),
+    },
+    EverythingKeySpec {
+        id: "app_builtin.everything.cut",
+        ini_key: "edit_cut_keys",
+        title: "剪切",
+        preferred: Some("Ctrl+X"),
+    },
+    EverythingKeySpec {
+        id: "app_builtin.everything.open_shift",
+        ini_key: "file_open_keys",
+        title: "打开结果的替代动作",
+        preferred: Some("Shift+Enter"),
+    },
+    EverythingKeySpec {
+        id: "app_config.everything.find",
+        ini_key: "edit_find_keys",
+        title: "查找",
+        preferred: Some("Ctrl+F"),
+    },
+    EverythingKeySpec {
+        id: "app_config.everything.rename",
+        ini_key: "file_rename_keys",
+        title: "重命名",
+        preferred: Some("F2"),
+    },
+    EverythingKeySpec {
+        id: "app_config.everything.delete",
+        ini_key: "file_delete_keys",
+        title: "删除",
+        preferred: Some("Delete"),
+    },
+    EverythingKeySpec {
+        id: "app_config.everything.properties",
+        ini_key: "file_properties_keys",
+        title: "属性",
+        preferred: Some("Alt+Enter"),
+    },
+    EverythingKeySpec {
+        id: "app_config.everything.refresh",
+        ini_key: "view_refresh_keys",
+        title: "刷新",
+        preferred: Some("F5"),
+    },
+    EverythingKeySpec {
+        id: "app_config.everything.fullscreen",
+        ini_key: "view_fullscreen_keys",
+        title: "全屏",
+        preferred: Some("F11"),
+    },
+];
+
+fn everything_config_entries() -> Vec<HotkeyEntry> {
+    let Some(path) = everything_ini_path() else {
+        return Vec::new();
+    };
+    let note = "Everything 用户配置 Everything.ini，可由 Bugzia 写回对应 *_keys 字段；多快捷键字段会优先编辑当前展示的这一项。";
+    EVERYTHING_KEY_SPECS
+        .iter()
+        .map(|spec| {
+            let raw = read_ini_value(&path, spec.ini_key).unwrap_or_default();
+            let display = everything_ini_value_display(&raw, spec.preferred);
+            app_config_entry(
+                spec.id,
+                "Everything",
+                "Everything.exe",
+                &display,
+                spec.title,
+                HotkeyScope::AppLocal,
+                &path,
+                true,
+                note,
+            )
+        })
+        .collect()
 }
 
 fn raw_config_entry(
@@ -1909,6 +2139,342 @@ fn bongocat_config_entries() -> Vec<HotkeyEntry> {
         .collect()
 }
 
+fn pot_config_entries() -> Vec<HotkeyEntry> {
+    let Some(path) = env_path("APPDATA", r"com.pot-app.desktop\config.json") else {
+        return Vec::new();
+    };
+    let Some(value) = read_json_value(&path) else {
+        return Vec::new();
+    };
+    let specs = [
+        (
+            "app_config.pot.selection_translate",
+            "hotkey_selection_translate",
+            "划词翻译",
+        ),
+        (
+            "app_config.pot.input_translate",
+            "hotkey_input_translate",
+            "输入翻译",
+        ),
+        (
+            "app_config.pot.ocr_recognize",
+            "hotkey_ocr_recognize",
+            "OCR 识别",
+        ),
+        (
+            "app_config.pot.ocr_translate",
+            "hotkey_ocr_translate",
+            "OCR 翻译",
+        ),
+    ];
+    specs
+        .into_iter()
+        .map(|(id, key, title)| {
+            let display = value
+                .get(key)
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .trim()
+                .to_string();
+            app_config_entry(
+                id,
+                "Pot",
+                "pot.exe",
+                &display,
+                title,
+                HotkeyScope::Global,
+                &path,
+                true,
+                "Pot 用户配置 config.json，可写回 hotkey_* 字段；空值表示未设置。",
+            )
+        })
+        .collect()
+}
+
+fn handy_config_entries() -> Vec<HotkeyEntry> {
+    let Some(path) = env_path("APPDATA", r"com.pais.handy\settings_store.json") else {
+        return Vec::new();
+    };
+    let Some(value) = read_json_value(&path) else {
+        return Vec::new();
+    };
+    let specs = [
+        (
+            "app_config.handy.transcribe",
+            "/settings/bindings/transcribe/current_binding",
+            "转写",
+            HotkeyScope::Global,
+        ),
+        (
+            "app_config.handy.cancel",
+            "/settings/bindings/cancel/current_binding",
+            "取消录音",
+            HotkeyScope::AppLocal,
+        ),
+    ];
+    specs
+        .into_iter()
+        .filter_map(|(id, pointer, title, scope)| {
+            let display = json_pointer_string(&value, pointer)?;
+            Some(app_config_entry(
+                id,
+                "Handy",
+                "handy.exe",
+                &display,
+                title,
+                scope,
+                &path,
+                true,
+                "Handy 用户配置 settings_store.json，可写回 bindings.*.current_binding 字段。",
+            ))
+        })
+        .collect()
+}
+
+struct EditorKeybindingAppSpec {
+    id_prefix: &'static str,
+    app_name: &'static str,
+    process_name: &'static str,
+    config_suffix: &'static str,
+}
+
+const EDITOR_KEYBINDING_APPS: &[EditorKeybindingAppSpec] = &[
+    EditorKeybindingAppSpec {
+        id_prefix: "app_config.vscode.keybinding_",
+        app_name: "Visual Studio Code",
+        process_name: "Code.exe",
+        config_suffix: r"Code\User\keybindings.json",
+    },
+    EditorKeybindingAppSpec {
+        id_prefix: "app_config.trae_cn.keybinding_",
+        app_name: "Trae CN",
+        process_name: "Trae CN.exe",
+        config_suffix: r"Trae CN\User\keybindings.json",
+    },
+];
+
+fn editor_keybinding_path(spec: &EditorKeybindingAppSpec) -> Option<PathBuf> {
+    env_path("APPDATA", spec.config_suffix).filter(|path| path.exists())
+}
+
+fn editor_keybindings_entries() -> Vec<HotkeyEntry> {
+    let mut entries = Vec::new();
+    for spec in EDITOR_KEYBINDING_APPS {
+        let Some(path) = editor_keybinding_path(spec) else {
+            continue;
+        };
+        let Some(value) = read_jsonc_value(&path) else {
+            continue;
+        };
+        let Some(items) = value.as_array() else {
+            continue;
+        };
+        for (index, item) in items.iter().enumerate() {
+            let key = item
+                .get("key")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .trim();
+            let command = item
+                .get("command")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .trim();
+            if key.is_empty() || command.is_empty() || command.starts_with('-') {
+                continue;
+            }
+            entries.push(app_config_entry(
+                &format!("{}{index}", spec.id_prefix),
+                spec.app_name,
+                spec.process_name,
+                key,
+                &format!("用户绑定：{command}"),
+                HotkeyScope::AppLocal,
+                &path,
+                true,
+                "编辑器用户 keybindings.json，可写回当前用户绑定的 key 字段；清空会删除这条用户绑定。",
+            ));
+        }
+    }
+    entries
+}
+
+fn siyuan_config_path() -> Option<PathBuf> {
+    [
+        PathBuf::from(r"D:\app\SiYuan\siyuan\conf\conf.json"),
+        PathBuf::from(r"D:\app\SiYuan\conf\conf.json"),
+    ]
+    .into_iter()
+    .find(|path| path.exists())
+}
+
+fn siyuan_hotkey_to_accel(raw: &str) -> String {
+    let raw = raw.trim();
+    if raw.is_empty() {
+        return String::new();
+    }
+    let mut parts: Vec<String> = Vec::new();
+    let mut key = String::new();
+    for ch in raw.chars() {
+        match ch {
+            '⌥' => parts.push("Alt".into()),
+            '⌘' | '⌃' => parts.push("Ctrl".into()),
+            '⇧' => parts.push("Shift".into()),
+            '↑' => key = "Up".into(),
+            '↓' => key = "Down".into(),
+            '←' => key = "Left".into(),
+            '→' => key = "Right".into(),
+            c if !c.is_whitespace() => key.push(c),
+            _ => {}
+        }
+    }
+    if !key.is_empty() {
+        parts.push(match key.as_str() {
+            "⌫" => "Backspace".into(),
+            "⌦" => "Delete".into(),
+            "⏎" => "Enter".into(),
+            "␣" => "Space".into(),
+            _ => key,
+        });
+    }
+    parts.join("+")
+}
+
+fn accel_to_siyuan_hotkey(accelerator: &str) -> Result<String, String> {
+    let accelerator = accelerator.trim();
+    if accelerator.is_empty() {
+        return Ok(String::new());
+    }
+    let parsed = parse_accel(accelerator)
+        .ok_or_else(|| "思源快捷键需要包含一个主键，如 Alt+1 或 Ctrl+Shift+P".to_string())?;
+    if parsed.win {
+        return Err("思源快捷键暂不支持 Win 键".into());
+    }
+    let mut out = String::new();
+    if parsed.alt {
+        out.push('⌥');
+    }
+    if parsed.ctrl {
+        out.push('⌘');
+    }
+    if parsed.shift {
+        out.push('⇧');
+    }
+    let key_text = match parsed.key {
+        NormalizedKey::Char(c) => c.to_string(),
+        NormalizedKey::F(n) => format!("F{n}"),
+        NormalizedKey::Space => "␣".into(),
+        NormalizedKey::Named(ref name) => match name.as_str() {
+            "Up" => "↑".into(),
+            "Down" => "↓".into(),
+            "Left" => "←".into(),
+            "Right" => "→".into(),
+            "Enter" => "⏎".into(),
+            "Backspace" => "⌫".into(),
+            "Delete" => "⌦".into(),
+            "." | "," | ";" | "/" | "\\" | "[" | "]" | "'" | "`" | "=" => name.clone(),
+            "Minus" => "-".into(),
+            "Plus" => "+".into(),
+            _ => return Err("思源暂不支持写入这个主键".into()),
+        },
+    };
+    out.push_str(&key_text);
+    Ok(out)
+}
+
+fn collect_siyuan_dock_entries(
+    path: &Path,
+    root: &serde_json::Value,
+    entries: &mut Vec<HotkeyEntry>,
+) {
+    for side in ["left", "right", "bottom"] {
+        let Some(groups) = root
+            .pointer(&format!("/uiLayout/{side}/data"))
+            .and_then(|v| v.as_array())
+        else {
+            continue;
+        };
+        for (group_index, group) in groups.iter().enumerate() {
+            let Some(items) = group.as_array() else {
+                continue;
+            };
+            for (item_index, item) in items.iter().enumerate() {
+                let title = item
+                    .get("title")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("Dock 项");
+                let item_type = item.get("type").and_then(|v| v.as_str()).unwrap_or("item");
+                let raw = item.get("hotkey").and_then(|v| v.as_str()).unwrap_or("");
+                entries.push(app_config_entry(
+                    &format!("app_config.siyuan.dock_{side}_{group_index}_{item_index}"),
+                    "思源笔记",
+                    "SiYuan.exe",
+                    &siyuan_hotkey_to_accel(raw),
+                    &format!("Dock：{title}"),
+                    HotkeyScope::AppLocal,
+                    path,
+                    true,
+                    &format!("思源 conf.json 的 uiLayout Dock 快捷键；类型：{item_type}。"),
+                ));
+            }
+        }
+    }
+}
+
+fn collect_siyuan_keymap_entries(
+    path: &Path,
+    value: &serde_json::Value,
+    entries: &mut Vec<HotkeyEntry>,
+    keymap_index: &mut usize,
+) {
+    let Some(map) = value.as_object() else {
+        return;
+    };
+    for (key, child) in map {
+        if let Some(custom) = child.get("custom").and_then(|v| v.as_str()) {
+            let default = child
+                .get("default")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default();
+            if custom.is_empty() && default.is_empty() {
+                continue;
+            }
+            let index = *keymap_index;
+            *keymap_index += 1;
+            entries.push(app_config_entry(
+                &format!("app_config.siyuan.keymap_{index}"),
+                "思源笔记",
+                "SiYuan.exe",
+                &siyuan_hotkey_to_accel(custom),
+                &format!("功能：{key}"),
+                HotkeyScope::AppLocal,
+                path,
+                true,
+                "思源 conf.json 的 keymap 快捷键；修改后写回 custom 字段，清空表示禁用该用户快捷键。",
+            ));
+            continue;
+        }
+        collect_siyuan_keymap_entries(path, child, entries, keymap_index);
+    }
+}
+
+fn siyuan_config_entries() -> Vec<HotkeyEntry> {
+    let Some(path) = siyuan_config_path() else {
+        return Vec::new();
+    };
+    let Some(value) = read_json_value(&path) else {
+        return Vec::new();
+    };
+    let mut entries = Vec::new();
+    collect_siyuan_dock_entries(&path, &value, &mut entries);
+    if let Some(keymap) = value.get("keymap") {
+        let mut keymap_index = 0;
+        collect_siyuan_keymap_entries(&path, keymap, &mut entries, &mut keymap_index);
+    }
+    entries
+}
+
 fn read_ini_value(path: &Path, wanted_key: &str) -> Option<String> {
     let text = fs::read_to_string(path).ok()?;
     for line in text.lines() {
@@ -1922,43 +2488,544 @@ fn read_ini_value(path: &Path, wanted_key: &str) -> Option<String> {
     None
 }
 
-fn kugou_config_entries() -> Vec<HotkeyEntry> {
-    let Some(path) = env_path("APPDATA", r"KuGou8\KuGou.ini") else {
-        return Vec::new();
+fn write_ini_value(path: &Path, wanted_key: &str, wanted_value: &str) -> Result<(), String> {
+    let text = fs::read_to_string(path).map_err(|e| format!("read ini: {e}"))?;
+    let mut found = false;
+    let mut out: Vec<String> = Vec::new();
+    for line in text.lines() {
+        if let Some((key, _value)) = line.split_once('=') {
+            if key.trim().eq_ignore_ascii_case(wanted_key) {
+                out.push(format!("{key}={wanted_value}"));
+                found = true;
+                continue;
+            }
+        }
+        out.push(line.to_string());
+    }
+    if !found {
+        out.push(format!("{wanted_key}={wanted_value}"));
+    }
+    fs::write(path, out.join("\n")).map_err(|e| format!("write ini: {e}"))
+}
+
+fn everything_ini_value_display(raw: &str, preferred: Option<&str>) -> String {
+    let codes: Vec<u32> = raw
+        .split(',')
+        .filter_map(|part| part.trim().parse::<u32>().ok())
+        .filter(|code| *code != 0)
+        .collect();
+    if codes.is_empty() {
+        return String::new();
+    }
+    let decoded: Vec<String> = codes
+        .iter()
+        .filter_map(|code| everything_key_code_to_accel(*code))
+        .collect();
+    if let Some(preferred) = preferred {
+        if let Some(accel) = decoded
+            .iter()
+            .find(|accel| accel.eq_ignore_ascii_case(preferred))
+        {
+            return accel.clone();
+        }
+    }
+    decoded.into_iter().next().unwrap_or_default()
+}
+
+fn everything_key_code_to_accel(code: u32) -> Option<String> {
+    if code == 0 {
+        return None;
+    }
+    let vk = code & 0xff;
+    let mut parts: Vec<String> = Vec::new();
+    if code & 0x0800 != 0 {
+        parts.push("Win".into());
+    }
+    if code & 0x0100 != 0 {
+        parts.push("Ctrl".into());
+    }
+    if code & 0x0200 != 0 {
+        parts.push("Alt".into());
+    }
+    if code & 0x0400 != 0 {
+        parts.push("Shift".into());
+    }
+    parts.push(vk_to_accel_key(vk)?);
+    Some(parts.join("+"))
+}
+
+fn vk_to_accel_key(vk: u32) -> Option<String> {
+    match vk {
+        0x30..=0x39 | 0x41..=0x5a => char::from_u32(vk).map(|c| c.to_string()),
+        0x70..=0x87 => Some(format!("F{}", vk - 0x6f)),
+        0x08 => Some("Backspace".into()),
+        0x09 => Some("Tab".into()),
+        0x0d => Some("Enter".into()),
+        0x1b => Some("Esc".into()),
+        0x20 => Some("Space".into()),
+        0x21 => Some("PageUp".into()),
+        0x22 => Some("PageDown".into()),
+        0x23 => Some("End".into()),
+        0x24 => Some("Home".into()),
+        0x25 => Some("Left".into()),
+        0x26 => Some("Up".into()),
+        0x27 => Some("Right".into()),
+        0x28 => Some("Down".into()),
+        0x2d => Some("Insert".into()),
+        0x2e => Some("Delete".into()),
+        0xba => Some(";".into()),
+        0xbb => Some("=".into()),
+        0xbc => Some(",".into()),
+        0xbd => Some("Minus".into()),
+        0xbe => Some(".".into()),
+        0xbf => Some("/".into()),
+        0xc0 => Some("`".into()),
+        0xdb => Some("[".into()),
+        0xdc => Some("\\".into()),
+        0xdd => Some("]".into()),
+        0xde => Some("'".into()),
+        _ => None,
+    }
+}
+
+fn everything_accel_to_key_code(accelerator: &str, seed_code: u32) -> Result<u32, String> {
+    let normalized = parse_accel(accelerator)
+        .ok_or_else(|| "Everything 快捷键需要包含一个主键，如 Ctrl+Alt+K".to_string())?;
+    let mut code = seed_code & !0x0fff;
+    if normalized.win {
+        code |= 0x0800;
+    }
+    if normalized.ctrl {
+        code |= 0x0100;
+    }
+    if normalized.alt {
+        code |= 0x0200;
+    }
+    if normalized.shift {
+        code |= 0x0400;
+    }
+    code |= accel_key_to_vk(&normalized.key)?;
+    Ok(code)
+}
+
+fn accel_key_to_vk(key: &NormalizedKey) -> Result<u32, String> {
+    match key {
+        NormalizedKey::Char(c) if c.is_ascii_alphanumeric() => Ok(*c as u32),
+        NormalizedKey::F(n) if (1..=24).contains(n) => Ok(0x6f + *n as u32),
+        NormalizedKey::Space => Ok(0x20),
+        NormalizedKey::Named(name) => match name.as_str() {
+            "." => Ok(0xbe),
+            "," => Ok(0xbc),
+            ";" => Ok(0xba),
+            "/" => Ok(0xbf),
+            "\\" => Ok(0xdc),
+            "[" => Ok(0xdb),
+            "]" => Ok(0xdd),
+            "'" => Ok(0xde),
+            "`" => Ok(0xc0),
+            "Minus" => Ok(0xbd),
+            "=" => Ok(0xbb),
+            "Plus" => Ok(0xbb),
+            "Left" => Ok(0x25),
+            "Right" => Ok(0x27),
+            "Up" => Ok(0x26),
+            "Down" => Ok(0x28),
+            "Home" => Ok(0x24),
+            "End" => Ok(0x23),
+            "PageUp" => Ok(0x21),
+            "PageDown" => Ok(0x22),
+            "Tab" => Ok(0x09),
+            "Enter" => Ok(0x0d),
+            "Esc" => Ok(0x1b),
+            "Delete" => Ok(0x2e),
+            "Backspace" => Ok(0x08),
+            "Insert" => Ok(0x2d),
+            _ => Err("Everything 暂不支持写入这个主键".into()),
+        },
+        _ => Err("Everything 暂不支持写入这个主键".into()),
+    }
+}
+
+fn matching_everything_code_index(codes: &[u32], preferred: Option<&str>) -> Option<usize> {
+    preferred.and_then(|preferred| {
+        codes.iter().position(|code| {
+            everything_key_code_to_accel(*code)
+                .map(|accel| accel.eq_ignore_ascii_case(preferred))
+                .unwrap_or(false)
+        })
+    })
+}
+
+fn update_everything_ini_key(
+    path: &Path,
+    ini_key: &str,
+    preferred: Option<&str>,
+    accelerator: String,
+) -> Result<(), String> {
+    let raw = read_ini_value(path, ini_key).unwrap_or_default();
+    let mut codes: Vec<u32> = raw
+        .split(',')
+        .filter_map(|part| part.trim().parse::<u32>().ok())
+        .filter(|code| *code != 0)
+        .collect();
+    let index = matching_everything_code_index(&codes, preferred);
+    let seed = index
+        .and_then(|idx| codes.get(idx).copied())
+        .or_else(|| codes.first().copied())
+        .unwrap_or(0);
+    if accelerator.trim().is_empty() {
+        if let Some(index) = index {
+            codes.remove(index);
+        } else {
+            codes.clear();
+        }
+    } else {
+        let next = everything_accel_to_key_code(&accelerator, seed)?;
+        if let Some(index) = index {
+            codes[index] = next;
+        } else if codes.is_empty() {
+            codes.push(next);
+        } else {
+            codes[0] = next;
+        }
+    }
+    let value = codes
+        .into_iter()
+        .map(|code| code.to_string())
+        .collect::<Vec<_>>()
+        .join(",");
+    write_ini_value(path, ini_key, &value)
+}
+
+struct KugouKeySpec {
+    id: &'static str,
+    ini_key: &'static str,
+    title: &'static str,
+    scope: HotkeyScope,
+}
+
+const KUGOU_KEY_SPECS: &[KugouKeySpec] = &[
+    KugouKeySpec {
+        id: "app_config.kugou.play_pause_global",
+        ini_key: "KGPlayAndPausGlobalHotKey",
+        title: "播放/暂停（全局）",
+        scope: HotkeyScope::Global,
+    },
+    KugouKeySpec {
+        id: "app_config.kugou.next_global",
+        ini_key: "KGNextGlobalHotKey",
+        title: "下一首（全局）",
+        scope: HotkeyScope::Global,
+    },
+    KugouKeySpec {
+        id: "app_config.kugou.previous_global",
+        ini_key: "KGPreGlobalHotKey",
+        title: "上一首（全局）",
+        scope: HotkeyScope::Global,
+    },
+    KugouKeySpec {
+        id: "app_config.kugou.volume_up_global",
+        ini_key: "KGAddVolumeGlobalHotKey",
+        title: "增大音量（全局）",
+        scope: HotkeyScope::Global,
+    },
+    KugouKeySpec {
+        id: "app_config.kugou.volume_down_global",
+        ini_key: "KGSubVolumeGlobalHotKey",
+        title: "减小音量（全局）",
+        scope: HotkeyScope::Global,
+    },
+    KugouKeySpec {
+        id: "app_config.kugou.mute_global",
+        ini_key: "MuteGlobalHotKey",
+        title: "静音（全局）",
+        scope: HotkeyScope::Global,
+    },
+    KugouKeySpec {
+        id: "app_config.kugou.like_global",
+        ini_key: "LikeGlobalHotKey",
+        title: "喜欢歌曲（全局）",
+        scope: HotkeyScope::Global,
+    },
+    KugouKeySpec {
+        id: "app_config.kugou.forward_global",
+        ini_key: "ForwardGlobalHotKeyAfter8270",
+        title: "快进（全局）",
+        scope: HotkeyScope::Global,
+    },
+    KugouKeySpec {
+        id: "app_config.kugou.rewind_global",
+        ini_key: "RewindGlobalHotKeyAfter8270",
+        title: "快退（全局）",
+        scope: HotkeyScope::Global,
+    },
+    KugouKeySpec {
+        id: "app_config.kugou.lyric_global",
+        ini_key: "LyricWinGlobalHotKey",
+        title: "桌面歌词全局热键",
+        scope: HotkeyScope::Global,
+    },
+    KugouKeySpec {
+        id: "app_config.kugou.lyric_lock_global",
+        ini_key: "LockLyricGlobalHotKeyKey",
+        title: "锁定桌面歌词（全局）",
+        scope: HotkeyScope::Global,
+    },
+    KugouKeySpec {
+        id: "app_config.kugou.play_pause",
+        ini_key: "PlayAndPauseHotKey",
+        title: "播放/暂停",
+        scope: HotkeyScope::AppLocal,
+    },
+    KugouKeySpec {
+        id: "app_config.kugou.next",
+        ini_key: "NextHotKey",
+        title: "下一首",
+        scope: HotkeyScope::AppLocal,
+    },
+    KugouKeySpec {
+        id: "app_config.kugou.previous",
+        ini_key: "PreHotKey",
+        title: "上一首",
+        scope: HotkeyScope::AppLocal,
+    },
+    KugouKeySpec {
+        id: "app_config.kugou.volume_up",
+        ini_key: "AddVolumeHotKey",
+        title: "增大音量",
+        scope: HotkeyScope::AppLocal,
+    },
+    KugouKeySpec {
+        id: "app_config.kugou.volume_down",
+        ini_key: "SubVolumeHotKey",
+        title: "减小音量",
+        scope: HotkeyScope::AppLocal,
+    },
+    KugouKeySpec {
+        id: "app_config.kugou.mute",
+        ini_key: "MuteHotKey",
+        title: "静音",
+        scope: HotkeyScope::AppLocal,
+    },
+    KugouKeySpec {
+        id: "app_config.kugou.like",
+        ini_key: "LikeHotKey",
+        title: "喜欢歌曲",
+        scope: HotkeyScope::AppLocal,
+    },
+    KugouKeySpec {
+        id: "app_config.kugou.forward",
+        ini_key: "ForwardHotKeyAfter8270",
+        title: "快进",
+        scope: HotkeyScope::AppLocal,
+    },
+    KugouKeySpec {
+        id: "app_config.kugou.rewind",
+        ini_key: "RewindHotKeyAfter8270",
+        title: "快退",
+        scope: HotkeyScope::AppLocal,
+    },
+    KugouKeySpec {
+        id: "app_config.kugou.lyric_window",
+        ini_key: "LyricWinHotKey",
+        title: "桌面歌词窗口热键",
+        scope: HotkeyScope::AppLocal,
+    },
+    KugouKeySpec {
+        id: "app_config.kugou.lyric_lock",
+        ini_key: "LockLyriclHotKeyKey",
+        title: "锁定桌面歌词",
+        scope: HotkeyScope::AppLocal,
+    },
+    KugouKeySpec {
+        id: "app_config.kugou.music_distinguish",
+        ini_key: "MusicDistinguishHotKey",
+        title: "听歌识曲",
+        scope: HotkeyScope::AppLocal,
+    },
+    KugouKeySpec {
+        id: "app_config.kugou.music_distinguish_start",
+        ini_key: "MusicDistinguishStartHotKey",
+        title: "开始听歌识曲",
+        scope: HotkeyScope::AppLocal,
+    },
+    KugouKeySpec {
+        id: "app_config.kugou.down_global",
+        ini_key: "DownGlobalHotKey",
+        title: "下载（全局）",
+        scope: HotkeyScope::Global,
+    },
+    KugouKeySpec {
+        id: "app_config.kugou.down",
+        ini_key: "DownHotKey",
+        title: "下载",
+        scope: HotkeyScope::AppLocal,
+    },
+];
+
+fn kugou_ini_value_display(raw: Option<String>) -> String {
+    let Some(raw) = raw else {
+        return String::new();
     };
-    if !path.exists() {
+    let raw = raw.trim();
+    if raw.is_empty() || raw == "0" {
+        String::new()
+    } else {
+        format!("编码值 {raw}")
+    }
+}
+
+fn kugou_config_entries(
+    overrides: &HashMap<String, String>,
+    override_path: Option<&Path>,
+) -> Vec<HotkeyEntry> {
+    let ini_path = env_path("APPDATA", r"KuGou8\KuGou.ini").filter(|path| path.exists());
+    let app_path = first_existing_path(&[
+        r"D:\app\音乐软件\KGMusic\KuGou.exe",
+        r"C:\Program Files\KuGou\KGMusic\KuGou.exe",
+    ]);
+    if ini_path.is_none() && app_path.is_none() && !process_name_exists("KuGou.exe") {
         return Vec::new();
     }
-    let note = "酷狗把热键存成数值编码；当前只读展示原始值，后续需要专项解码后才能安全写回。";
-    [
-        (
-            "app_config.kugou.lyric_global",
-            "LyricWinGlobalHotKey",
-            "桌面歌词全局热键（待解码）",
-        ),
-        (
-            "app_config.kugou.lyric_window",
-            "LyricWinHotKey",
-            "桌面歌词窗口热键（待解码）",
-        ),
-    ]
-    .into_iter()
-    .filter_map(|(id, key, title)| {
-        let raw = read_ini_value(&path, key)?;
-        if raw.is_empty() || raw == "0" {
-            return None;
+    let source_hint = ini_path
+        .as_ref()
+        .map(|path| path.to_string_lossy().to_string())
+        .or_else(|| app_path.clone());
+    let note = "酷狗热键原始值来自 KuGou.ini 的专有数值编码；Bugzia 会把修改保存到本地覆盖表，用于展示、查询和冲突检测，不直接改写酷狗专有编码。";
+    KUGOU_KEY_SPECS
+        .iter()
+        .map(|spec| {
+            let display = kugou_ini_value_display(
+                ini_path
+                    .as_ref()
+                    .and_then(|path| read_ini_value(path, spec.ini_key)),
+            );
+            app_override_entry(
+                spec.id,
+                "酷狗音乐",
+                "KuGou.exe",
+                &display,
+                spec.title,
+                spec.scope,
+                override_path,
+                source_hint.as_deref(),
+                note,
+                overrides,
+            )
+        })
+        .collect()
+}
+
+fn vibing_config_path() -> Option<PathBuf> {
+    Some(PathBuf::from(
+        r"D:\app\AI软件\VibeVoice_AI_文本转语音工具\Vibing\config.yaml",
+    ))
+    .filter(|path| path.exists())
+}
+
+fn yaml_hotkey_value(path: &Path, wanted_key: &str) -> Option<String> {
+    let text = fs::read_to_string(path).ok()?;
+    let mut in_hotkey = false;
+    for line in text.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('#') || trimmed.is_empty() {
+            continue;
         }
-        Some(raw_config_entry(
-            id,
-            "酷狗音乐",
-            "KuGou.exe",
-            &raw,
-            title,
-            &path,
-            note,
-        ))
-    })
-    .collect()
+        if !line.starts_with(' ') && !line.starts_with('\t') {
+            in_hotkey = trimmed == "hotkey:";
+            continue;
+        }
+        if !in_hotkey {
+            continue;
+        }
+        let Some((key, value)) = trimmed.split_once(':') else {
+            continue;
+        };
+        if key.trim() != wanted_key {
+            continue;
+        }
+        let value = value.trim();
+        if value == "~" || value.eq_ignore_ascii_case("null") {
+            return Some(String::new());
+        }
+        return Some(value.trim_matches('"').trim_matches('\'').to_string());
+    }
+    None
+}
+
+fn yaml_hotkey_literal(accelerator: &str) -> String {
+    if accelerator.trim().is_empty() {
+        "~".into()
+    } else {
+        format!("\"{}\"", accelerator.trim())
+    }
+}
+
+fn write_yaml_hotkey(path: &Path, wanted_key: &str, accelerator: &str) -> Result<(), String> {
+    let text = fs::read_to_string(path).map_err(|e| format!("read yaml: {e}"))?;
+    let mut out: Vec<String> = Vec::new();
+    let mut in_hotkey = false;
+    let mut found_section = false;
+    let mut found_key = false;
+    let replacement = yaml_hotkey_literal(accelerator);
+    for line in text.lines() {
+        let trimmed = line.trim();
+        if !line.starts_with(' ') && !line.starts_with('\t') && !trimmed.is_empty() {
+            if in_hotkey && !found_key {
+                out.push(format!("  {wanted_key}: {replacement}"));
+                found_key = true;
+            }
+            in_hotkey = trimmed == "hotkey:";
+            found_section |= in_hotkey;
+        }
+        if in_hotkey {
+            if let Some((key, _value)) = trimmed.split_once(':') {
+                if key.trim() == wanted_key {
+                    let indent_len = line.len() - line.trim_start().len();
+                    let indent = &line[..indent_len];
+                    out.push(format!("{indent}{wanted_key}: {replacement}"));
+                    found_key = true;
+                    continue;
+                }
+            }
+        }
+        out.push(line.to_string());
+    }
+    if found_section && in_hotkey && !found_key {
+        out.push(format!("  {wanted_key}: {replacement}"));
+    } else if !found_section {
+        out.push("hotkey:".into());
+        out.push(format!("  {wanted_key}: {replacement}"));
+    }
+    fs::write(path, out.join("\n")).map_err(|e| format!("write yaml: {e}"))
+}
+
+fn vibing_config_entries() -> Vec<HotkeyEntry> {
+    let Some(path) = vibing_config_path() else {
+        return Vec::new();
+    };
+    let specs = [
+        ("app_config.vibing.hold", "hold", "按住转写"),
+        ("app_config.vibing.toggle", "toggle", "切换转写"),
+        ("app_config.vibing.translate", "translate", "翻译模式"),
+    ];
+    specs
+        .into_iter()
+        .map(|(id, key, title)| {
+            let display = yaml_hotkey_value(&path, key).unwrap_or_default();
+            app_config_entry(
+                id,
+                "Vibing",
+                "Vibing.exe",
+                &display,
+                title,
+                HotkeyScope::Global,
+                &path,
+                true,
+                "Vibing 配置 config.yaml，可写回 hotkey 段中的对应字段；空值会写为 YAML null。",
+            )
+        })
+        .collect()
 }
 
 #[cfg(target_os = "windows")]
@@ -2037,18 +3104,28 @@ fn winstep_config_entries() -> Vec<HotkeyEntry> {
     Vec::new()
 }
 
-fn app_config_entries() -> Vec<HotkeyEntry> {
+fn app_config_entries(app: &AppHandle) -> Vec<HotkeyEntry> {
+    let overrides = load_app_hotkey_overrides(app);
+    let override_path = app_hotkey_overrides_path(app).ok();
     let mut entries = Vec::new();
     entries.extend(typeless_config_entries());
     entries.extend(pixpin_config_entries());
     entries.extend(bongocat_config_entries());
-    entries.extend(kugou_config_entries());
+    entries.extend(pot_config_entries());
+    entries.extend(handy_config_entries());
+    entries.extend(everything_config_entries());
+    entries.extend(kugou_config_entries(&overrides, override_path.as_deref()));
+    entries.extend(vibing_config_entries());
+    entries.extend(editor_keybindings_entries());
+    entries.extend(siyuan_config_entries());
     entries.extend(winstep_config_entries());
     entries
 }
 
-fn app_builtin_entries() -> Vec<HotkeyEntry> {
+fn app_builtin_entries(app: &AppHandle) -> Vec<HotkeyEntry> {
     let mut entries = Vec::new();
+    let overrides = load_app_hotkey_overrides(app);
+    let override_path = app_hotkey_overrides_path(app).ok();
     let pogget_path = first_existing_path(&[r"D:\app\工具箱\Pogget文件收纳管理\Pogget.exe"]);
     if pogget_path.is_some() || process_name_exists("Pogget.exe") {
         let note = "Pogget.exe 内置默认全局热键；当前未发现可安全写回的外部配置。";
@@ -2078,27 +3155,31 @@ fn app_builtin_entries() -> Vec<HotkeyEntry> {
         r"D:\app\钉钉\DingDing\main\current_new\DingTalk.exe",
     ]);
     if dingtalk_path.is_some() || process_name_exists("DingTalk.exe") {
-        let note = "从钉钉本地资源文案提取的应用内置快捷键目录；当前未定位到可安全写回的用户配置。";
-        entries.push(app_builtin_entry(
+        let note = "从钉钉本地资源文案提取的应用内置快捷键目录；Bugzia 会把修改保存到本地覆盖表，用于展示、查询和冲突检测，不直接写入钉钉内部配置。";
+        entries.push(app_override_entry(
             "app_builtin.dingtalk.personal_switch",
             "钉钉",
             "DingTalk.exe",
             "Ctrl+Shift+1",
             "切换个人空间 / 标准版",
             HotkeyScope::AppLocal,
-            dingtalk_path.clone(),
+            override_path.as_deref(),
+            dingtalk_path.as_deref(),
             note,
+            &overrides,
         ));
         for number in 1..=9 {
-            entries.push(app_builtin_entry(
+            entries.push(app_override_entry(
                 &format!("app_builtin.dingtalk.nav_{number}"),
                 "钉钉",
                 "DingTalk.exe",
                 &format!("Ctrl+{number}"),
                 &format!("主导航栏切换 {number}"),
                 HotkeyScope::AppLocal,
-                dingtalk_path.clone(),
+                override_path.as_deref(),
+                dingtalk_path.as_deref(),
                 note,
+                &overrides,
             ));
         }
         for (id, display, title) in [
@@ -2149,15 +3230,17 @@ fn app_builtin_entries() -> Vec<HotkeyEntry> {
                 "语音听写",
             ),
         ] {
-            entries.push(app_builtin_entry(
+            entries.push(app_override_entry(
                 id,
                 "钉钉",
                 "DingTalk.exe",
                 display,
                 title,
                 HotkeyScope::AppLocal,
-                dingtalk_path.clone(),
+                override_path.as_deref(),
+                dingtalk_path.as_deref(),
                 note,
+                &overrides,
             ));
         }
     }
@@ -2202,7 +3285,9 @@ fn app_builtin_entries() -> Vec<HotkeyEntry> {
         r"D:\app\工具箱\everything\Everything.exe",
         r"C:\Program Files\Everything\Everything.exe",
     ]);
-    if everything_path.is_some() || process_name_exists("Everything.exe") {
+    if everything_ini_path().is_none()
+        && (everything_path.is_some() || process_name_exists("Everything.exe"))
+    {
         let note = "从 Everything.exe 字符串扫描到的应用内快捷键目录；Everything.ini 当前未设置额外全局热键。";
         for (id, display, title) in [
             (
@@ -2284,6 +3369,15 @@ fn center_hidden_path(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(dir.join("hotkey-center-hidden.json"))
 }
 
+fn app_hotkey_overrides_path(app: &AppHandle) -> Result<PathBuf, String> {
+    let dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("resolve app_data_dir: {e}"))?;
+    fs::create_dir_all(&dir).map_err(|e| format!("create app data dir: {e}"))?;
+    Ok(dir.join("app-hotkey-overrides.json"))
+}
+
 fn observed_hotkeys_path(app: &AppHandle) -> Result<PathBuf, String> {
     let dir = app
         .path()
@@ -2345,6 +3439,32 @@ fn save_center_hidden(app: &AppHandle, hidden: &HashSet<String>) -> Result<(), S
     entries.sort();
     let data = serde_json::to_string_pretty(&entries).map_err(|e| format!("serialize: {e}"))?;
     atomic_write_json(&p, &data)
+}
+
+fn load_app_hotkey_overrides(app: &AppHandle) -> HashMap<String, String> {
+    let p = match app_hotkey_overrides_path(app) {
+        Ok(p) => p,
+        Err(_) => return HashMap::new(),
+    };
+    fs::read_to_string(&p)
+        .ok()
+        .and_then(|s| serde_json::from_str::<HashMap<String, String>>(&s).ok())
+        .unwrap_or_default()
+}
+
+fn save_app_hotkey_overrides(
+    app: &AppHandle,
+    overrides: &HashMap<String, String>,
+) -> Result<(), String> {
+    let p = app_hotkey_overrides_path(app)?;
+    let data = serde_json::to_string_pretty(overrides).map_err(|e| format!("serialize: {e}"))?;
+    atomic_write_json(&p, &data)
+}
+
+fn set_app_hotkey_override(app: &AppHandle, id: &str, accelerator: String) -> Result<(), String> {
+    let mut overrides = load_app_hotkey_overrides(app);
+    overrides.insert(id.to_string(), accelerator);
+    save_app_hotkey_overrides(app, &overrides)
 }
 
 fn load_observed_hotkeys_from_path(path: &Path) -> Vec<ObservedHotkeyEntry> {
@@ -2510,59 +3630,242 @@ fn validate_app_config_accel(raw: &str) -> Result<String, String> {
     Err("请输入有效快捷键，如 Ctrl+Alt+K；清空则表示未设置".into())
 }
 
-fn app_config_pointer_for_id(id: &str) -> Result<(PathBuf, &'static str), String> {
+enum AppConfigTarget {
+    JsonPointer {
+        path: PathBuf,
+        pointer: &'static str,
+    },
+    EverythingIni {
+        path: PathBuf,
+        ini_key: &'static str,
+        preferred: Option<&'static str>,
+    },
+    JsoncArrayKey {
+        path: PathBuf,
+        index: usize,
+    },
+    YamlHotkey {
+        path: PathBuf,
+        key: &'static str,
+    },
+    SiyuanHotkey {
+        path: PathBuf,
+        pointer: String,
+    },
+    SiyuanKeymap {
+        path: PathBuf,
+        index: usize,
+    },
+    LocalOverride,
+}
+
+fn everything_target_for_id(id: &str) -> Option<AppConfigTarget> {
+    let spec = EVERYTHING_KEY_SPECS.iter().find(|spec| spec.id == id)?;
+    let path = everything_ini_path()?;
+    Some(AppConfigTarget::EverythingIni {
+        path,
+        ini_key: spec.ini_key,
+        preferred: spec.preferred,
+    })
+}
+
+fn is_local_app_hotkey_override_id(id: &str) -> bool {
+    id.starts_with("app_builtin.dingtalk.") || KUGOU_KEY_SPECS.iter().any(|spec| spec.id == id)
+}
+
+fn editor_keybinding_target_for_id(id: &str) -> Option<AppConfigTarget> {
+    for spec in EDITOR_KEYBINDING_APPS {
+        let Some(index) = id
+            .strip_prefix(spec.id_prefix)
+            .and_then(|raw| raw.parse::<usize>().ok())
+        else {
+            continue;
+        };
+        let path = editor_keybinding_path(spec)?;
+        return Some(AppConfigTarget::JsoncArrayKey { path, index });
+    }
+    None
+}
+
+fn siyuan_target_for_id(id: &str) -> Option<AppConfigTarget> {
+    let path = siyuan_config_path()?;
+    if let Some(rest) = id.strip_prefix("app_config.siyuan.dock_") {
+        let parts: Vec<&str> = rest.split('_').collect();
+        if parts.len() != 3 {
+            return None;
+        }
+        let side = parts[0];
+        let group = parts[1].parse::<usize>().ok()?;
+        let item = parts[2].parse::<usize>().ok()?;
+        if !matches!(side, "left" | "right" | "bottom") {
+            return None;
+        }
+        return Some(AppConfigTarget::SiyuanHotkey {
+            path,
+            pointer: format!("/uiLayout/{side}/data/{group}/{item}/hotkey"),
+        });
+    }
+    let index = id
+        .strip_prefix("app_config.siyuan.keymap_")
+        .and_then(|raw| raw.parse::<usize>().ok())?;
+    Some(AppConfigTarget::SiyuanKeymap { path, index })
+}
+
+fn app_config_target_for_id(id: &str) -> Result<AppConfigTarget, String> {
+    if let Some(target) = everything_target_for_id(id) {
+        return Ok(target);
+    }
+    if let Some(target) = editor_keybinding_target_for_id(id) {
+        return Ok(target);
+    }
+    if let Some(target) = siyuan_target_for_id(id) {
+        return Ok(target);
+    }
+    if is_local_app_hotkey_override_id(id) {
+        return Ok(AppConfigTarget::LocalOverride);
+    }
     match id {
         "app_config.typeless.push_to_talk" => {
-            env_path("APPDATA", r"Typeless.exe\app-settings.json")
-                .map(|path| (path, "/keyboardShortcut/pushToTalk"))
+            env_path("APPDATA", r"Typeless.exe\app-settings.json").map(|path| {
+                AppConfigTarget::JsonPointer {
+                    path,
+                    pointer: "/keyboardShortcut/pushToTalk",
+                }
+            })
         }
         "app_config.typeless.handles_free_mode" => {
-            env_path("APPDATA", r"Typeless.exe\app-settings.json")
-                .map(|path| (path, "/keyboardShortcut/handlesFreeMode"))
+            env_path("APPDATA", r"Typeless.exe\app-settings.json").map(|path| {
+                AppConfigTarget::JsonPointer {
+                    path,
+                    pointer: "/keyboardShortcut/handlesFreeMode",
+                }
+            })
         }
         "app_config.typeless.paste_last_transcript" => {
-            env_path("APPDATA", r"Typeless.exe\app-settings.json")
-                .map(|path| (path, "/keyboardShortcut/pasteLastTranscript"))
+            env_path("APPDATA", r"Typeless.exe\app-settings.json").map(|path| {
+                AppConfigTarget::JsonPointer {
+                    path,
+                    pointer: "/keyboardShortcut/pasteLastTranscript",
+                }
+            })
         }
         "app_config.typeless.translation_mode" => {
-            env_path("APPDATA", r"Typeless.exe\app-settings.json")
-                .map(|path| (path, "/keyboardShortcut/translationMode"))
+            env_path("APPDATA", r"Typeless.exe\app-settings.json").map(|path| {
+                AppConfigTarget::JsonPointer {
+                    path,
+                    pointer: "/keyboardShortcut/translationMode",
+                }
+            })
         }
         "app_config.pixpin.screenshot" => {
-            env_path("LOCALAPPDATA", r"PixPin\Config\PixPinConfig.json")
-                .map(|path| (path, "/Action.Screenshot#s.win/v/shortCut"))
+            env_path("LOCALAPPDATA", r"PixPin\Config\PixPinConfig.json").map(|path| {
+                AppConfigTarget::JsonPointer {
+                    path,
+                    pointer: "/Action.Screenshot#s.win/v/shortCut",
+                }
+            })
         }
         "app_config.pixpin.pin" => env_path("LOCALAPPDATA", r"PixPin\Config\PixPinConfig.json")
-            .map(|path| (path, "/Action.Pin#s.win/v/shortCut")),
+            .map(|path| AppConfigTarget::JsonPointer {
+                path,
+                pointer: "/Action.Pin#s.win/v/shortCut",
+            }),
         "app_config.pixpin.bi_shortcut_4" => {
-            env_path("LOCALAPPDATA", r"PixPin\Config\PixPinConfig.json")
-                .map(|path| (path, "/BIShortcut.pixpin.4#s.win/v"))
+            env_path("LOCALAPPDATA", r"PixPin\Config\PixPinConfig.json").map(|path| {
+                AppConfigTarget::JsonPointer {
+                    path,
+                    pointer: "/BIShortcut.pixpin.4#s.win/v",
+                }
+            })
         }
         "app_config.bongocat.visible_cat" => env_path(
             "APPDATA",
             r"com.ayangweb.BongoCat\tauri-plugin-pinia\shortcut.json",
         )
-        .map(|path| (path, "/visibleCat")),
+        .map(|path| AppConfigTarget::JsonPointer {
+            path,
+            pointer: "/visibleCat",
+        }),
         "app_config.bongocat.penetrable" => env_path(
             "APPDATA",
             r"com.ayangweb.BongoCat\tauri-plugin-pinia\shortcut.json",
         )
-        .map(|path| (path, "/penetrable")),
+        .map(|path| AppConfigTarget::JsonPointer {
+            path,
+            pointer: "/penetrable",
+        }),
         "app_config.bongocat.mirror_mode" => env_path(
             "APPDATA",
             r"com.ayangweb.BongoCat\tauri-plugin-pinia\shortcut.json",
         )
-        .map(|path| (path, "/mirrorMode")),
+        .map(|path| AppConfigTarget::JsonPointer {
+            path,
+            pointer: "/mirrorMode",
+        }),
         "app_config.bongocat.visible_preference" => env_path(
             "APPDATA",
             r"com.ayangweb.BongoCat\tauri-plugin-pinia\shortcut.json",
         )
-        .map(|path| (path, "/visiblePreference")),
+        .map(|path| AppConfigTarget::JsonPointer {
+            path,
+            pointer: "/visiblePreference",
+        }),
         "app_config.bongocat.always_on_top" => env_path(
             "APPDATA",
             r"com.ayangweb.BongoCat\tauri-plugin-pinia\shortcut.json",
         )
-        .map(|path| (path, "/alwaysOnTop")),
+        .map(|path| AppConfigTarget::JsonPointer {
+            path,
+            pointer: "/alwaysOnTop",
+        }),
+        "app_config.pot.selection_translate" => {
+            env_path("APPDATA", r"com.pot-app.desktop\config.json").map(|path| {
+                AppConfigTarget::JsonPointer {
+                    path,
+                    pointer: "/hotkey_selection_translate",
+                }
+            })
+        }
+        "app_config.pot.input_translate" => env_path("APPDATA", r"com.pot-app.desktop\config.json")
+            .map(|path| AppConfigTarget::JsonPointer {
+                path,
+                pointer: "/hotkey_input_translate",
+            }),
+        "app_config.pot.ocr_recognize" => env_path("APPDATA", r"com.pot-app.desktop\config.json")
+            .map(|path| AppConfigTarget::JsonPointer {
+                path,
+                pointer: "/hotkey_ocr_recognize",
+            }),
+        "app_config.pot.ocr_translate" => env_path("APPDATA", r"com.pot-app.desktop\config.json")
+            .map(|path| AppConfigTarget::JsonPointer {
+                path,
+                pointer: "/hotkey_ocr_translate",
+            }),
+        "app_config.handy.transcribe" => env_path("APPDATA", r"com.pais.handy\settings_store.json")
+            .map(|path| AppConfigTarget::JsonPointer {
+                path,
+                pointer: "/settings/bindings/transcribe/current_binding",
+            }),
+        "app_config.handy.cancel" => env_path("APPDATA", r"com.pais.handy\settings_store.json")
+            .map(|path| AppConfigTarget::JsonPointer {
+                path,
+                pointer: "/settings/bindings/cancel/current_binding",
+            }),
+        "app_config.vibing.hold" => {
+            vibing_config_path().map(|path| AppConfigTarget::YamlHotkey { path, key: "hold" })
+        }
+        "app_config.vibing.toggle" => {
+            vibing_config_path().map(|path| AppConfigTarget::YamlHotkey {
+                path,
+                key: "toggle",
+            })
+        }
+        "app_config.vibing.translate" => {
+            vibing_config_path().map(|path| AppConfigTarget::YamlHotkey {
+                path,
+                key: "translate",
+            })
+        }
         _ => None,
     }
     .ok_or_else(|| "未找到这条应用配置快捷键".to_string())
@@ -2581,6 +3884,101 @@ fn set_json_pointer_string(
     }
     *slot = serde_json::Value::String(accelerator);
     Ok(())
+}
+
+fn update_jsonc_array_key(path: &Path, index: usize, accelerator: String) -> Result<(), String> {
+    let mut value =
+        read_jsonc_value(path).ok_or_else(|| "无法读取用户 keybindings.json".to_string())?;
+    let Some(items) = value.as_array_mut() else {
+        return Err("keybindings.json 不是数组，已取消写入".into());
+    };
+    if index >= items.len() {
+        return Err("这条用户快捷键已不存在，已取消写入".into());
+    }
+    if accelerator.trim().is_empty() {
+        items.remove(index);
+    } else {
+        let Some(slot) = items[index].get_mut("key") else {
+            return Err("keybindings.json 缺少 key 字段，已取消写入".into());
+        };
+        if !slot.is_string() {
+            return Err("keybindings.json 的 key 字段不是字符串，已取消写入".into());
+        }
+        *slot = serde_json::Value::String(accelerator);
+    }
+    let data = serde_json::to_string_pretty(&value).map_err(|e| format!("serialize: {e}"))?;
+    atomic_write_json(path, &data)
+}
+
+fn set_siyuan_hotkey_pointer(
+    path: &Path,
+    pointer: &str,
+    accelerator: String,
+) -> Result<(), String> {
+    let mut value = read_json_value(path).ok_or_else(|| "无法读取思源配置文件".to_string())?;
+    let Some(slot) = value.pointer_mut(pointer) else {
+        return Err("思源配置字段不存在，已取消写入".into());
+    };
+    if !slot.is_string() {
+        return Err("思源配置字段不是字符串，已取消写入".into());
+    }
+    *slot = serde_json::Value::String(accel_to_siyuan_hotkey(&accelerator)?);
+    let data = serde_json::to_string_pretty(&value).map_err(|e| format!("serialize: {e}"))?;
+    atomic_write_json(path, &data)
+}
+
+fn json_pointer_escape(segment: &str) -> String {
+    segment.replace('~', "~0").replace('/', "~1")
+}
+
+fn find_siyuan_keymap_pointer_by_index(
+    value: &serde_json::Value,
+    target_index: usize,
+    current_index: &mut usize,
+    base_pointer: &str,
+) -> Option<String> {
+    let map = value.as_object()?;
+    for (key, child) in map {
+        let child_pointer = format!("{}/{}", base_pointer, json_pointer_escape(key));
+        if child.get("custom").is_some() {
+            let custom = child
+                .get("custom")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default();
+            let default = child
+                .get("default")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default();
+            if !custom.is_empty() || !default.is_empty() {
+                if *current_index == target_index {
+                    return Some(format!("{child_pointer}/custom"));
+                }
+                *current_index += 1;
+            }
+            continue;
+        }
+        if let Some(found) =
+            find_siyuan_keymap_pointer_by_index(child, target_index, current_index, &child_pointer)
+        {
+            return Some(found);
+        }
+    }
+    None
+}
+
+fn update_siyuan_keymap_hotkey(
+    path: &Path,
+    index: usize,
+    accelerator: String,
+) -> Result<(), String> {
+    let value = read_json_value(path).ok_or_else(|| "无法读取思源配置文件".to_string())?;
+    let keymap = value
+        .get("keymap")
+        .ok_or_else(|| "思源配置缺少 keymap，已取消写入".to_string())?;
+    let mut current_index = 0;
+    let pointer = find_siyuan_keymap_pointer_by_index(keymap, index, &mut current_index, "/keymap")
+        .ok_or_else(|| "这条思源快捷键已不存在，已取消写入".to_string())?;
+    set_siyuan_hotkey_pointer(path, &pointer, accelerator)
 }
 
 fn validate_manual_input(input: ManualHotkeyInput) -> Result<ManualHotkeyInput, String> {
@@ -2695,8 +4093,8 @@ fn build_entries_raw(app: &AppHandle) -> Result<Vec<HotkeyEntry>, String> {
     }
 
     out.extend(windows_system_entries());
-    out.extend(app_builtin_entries());
-    out.extend(app_config_entries());
+    out.extend(app_builtin_entries(app));
+    out.extend(app_config_entries(app));
 
     for item in load_manual_hotkeys(app) {
         out.push(manual_to_entry(item));
@@ -3194,6 +4592,9 @@ fn annotate_conflicts(entries: &mut [HotkeyEntry]) {
         let mut peers: HashMap<usize, Vec<usize>> = HashMap::new();
         for (left_pos, &left) in idxs.iter().enumerate() {
             for &right in idxs.iter().skip(left_pos + 1) {
+                if entries[left].id == entries[right].id {
+                    continue;
+                }
                 if scopes_overlap(&entries[left], &entries[right]) {
                     peers.entry(left).or_default().push(right);
                     peers.entry(right).or_default().push(left);
@@ -3202,6 +4603,9 @@ fn annotate_conflicts(entries: &mut [HotkeyEntry]) {
         }
         for (&i, peer_idxs) in peers.iter() {
             for &peer in peer_idxs {
+                if entries[i].id == entries[peer].id {
+                    continue;
+                }
                 let is_system_override = is_low_risk_windows_override(&entries[i], &entries[peer]);
                 let peer_id = entries[peer].id.clone();
                 let peer_is_bugzia = matches!(entries[peer].source_type, HotkeySourceType::Bugzia);
@@ -3361,13 +4765,44 @@ pub fn manual_hotkey_entry_remove(app: AppHandle, id: String) -> Result<bool, St
 }
 
 #[tauri::command]
-pub fn app_config_hotkey_entry_update(id: String, accelerator: String) -> Result<bool, String> {
+pub fn app_config_hotkey_entry_update(
+    app: AppHandle,
+    id: String,
+    accelerator: String,
+) -> Result<bool, String> {
     let accelerator = validate_app_config_accel(&accelerator)?;
-    let (path, pointer) = app_config_pointer_for_id(&id)?;
-    let mut value = read_json_value(&path).ok_or_else(|| "无法读取应用配置文件".to_string())?;
-    set_json_pointer_string(&mut value, pointer, accelerator)?;
-    let data = serde_json::to_string_pretty(&value).map_err(|e| format!("serialize: {e}"))?;
-    atomic_write_json(&path, &data)?;
+    match app_config_target_for_id(&id)? {
+        AppConfigTarget::JsonPointer { path, pointer } => {
+            let mut value =
+                read_json_value(&path).ok_or_else(|| "无法读取应用配置文件".to_string())?;
+            set_json_pointer_string(&mut value, pointer, accelerator)?;
+            let data =
+                serde_json::to_string_pretty(&value).map_err(|e| format!("serialize: {e}"))?;
+            atomic_write_json(&path, &data)?;
+        }
+        AppConfigTarget::EverythingIni {
+            path,
+            ini_key,
+            preferred,
+        } => {
+            update_everything_ini_key(&path, ini_key, preferred, accelerator)?;
+        }
+        AppConfigTarget::JsoncArrayKey { path, index } => {
+            update_jsonc_array_key(&path, index, accelerator)?;
+        }
+        AppConfigTarget::YamlHotkey { path, key } => {
+            write_yaml_hotkey(&path, key, &accelerator)?;
+        }
+        AppConfigTarget::SiyuanHotkey { path, pointer } => {
+            set_siyuan_hotkey_pointer(&path, &pointer, accelerator)?;
+        }
+        AppConfigTarget::SiyuanKeymap { path, index } => {
+            update_siyuan_keymap_hotkey(&path, index, accelerator)?;
+        }
+        AppConfigTarget::LocalOverride => {
+            set_app_hotkey_override(&app, &id, accelerator)?;
+        }
+    }
     Ok(true)
 }
 

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type PointerEvent } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { emit, listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { applyNoteVars } from "../features/appearance/appearance";
@@ -198,6 +198,16 @@ export default function NoteWindow() {
     setConfirmingDestroy(false);
   }
 
+  function handleConfirmPointer(e: PointerEvent<HTMLDivElement>) {
+    const target = e.target as HTMLElement | null;
+    const action = target?.closest<HTMLButtonElement>("[data-note-confirm]")?.dataset.noteConfirm;
+    if (!action) return;
+    e.preventDefault();
+    e.stopPropagation();
+    if (action === "yes") confirmDestroy();
+    else cancelDestroy();
+  }
+
   // Header drag: start a native move on pointerdown, but let the buttons work by
   // stopping their pointerdown from bubbling (no data-tauri-drag-region — it eats
   // clicks, same lesson as PetWindow).
@@ -293,6 +303,7 @@ export default function NoteWindow() {
           aria-modal="true"
           aria-label="确认删除便笺"
           tabIndex={-1}
+          onPointerDownCapture={handleConfirmPointer}
           onPointerDown={(e) => {
             e.preventDefault();
             e.stopPropagation();
@@ -304,32 +315,14 @@ export default function NoteWindow() {
               <button
                 type="button"
                 className="note-confirm-btn yes"
-                onPointerDown={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  confirmDestroy();
-                }}
-                onClick={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  confirmDestroy();
-                }}
+                data-note-confirm="yes"
               >
                 Y
               </button>
               <button
                 type="button"
                 className="note-confirm-btn no"
-                onPointerDown={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  cancelDestroy();
-                }}
-                onClick={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  cancelDestroy();
-                }}
+                data-note-confirm="no"
               >
                 N
               </button>
