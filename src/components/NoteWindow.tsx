@@ -123,10 +123,23 @@ export default function NoteWindow() {
     return () => document.removeEventListener("keydown", onKeyDown, true);
   }, [confirmingDestroy]);
 
+  useEffect(() => {
+    if (!editing) return;
+    syncTextareaHeight();
+  }, [editing, content, settings.font_size]);
+
+  function syncTextareaHeight() {
+    const ta = taRef.current;
+    if (!ta) return;
+    ta.style.height = "auto";
+    ta.style.height = `${ta.scrollHeight}px`;
+  }
+
   function focusTextarea(selection: "start" | "end") {
     requestAnimationFrame(() => {
       const ta = taRef.current;
       if (!ta) return;
+      syncTextareaHeight();
       ta.focus();
       const pos = selection === "start" ? 0 : ta.value.length;
       ta.setSelectionRange(pos, pos);
@@ -279,6 +292,7 @@ export default function NoteWindow() {
               fontSize: settings.font_size,
             }}
             onChange={(e) => (draftRef.current = e.target.value)}
+            onInput={syncTextareaHeight}
             onBlur={commitEdit}
             onKeyDown={(e) => {
               if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {

@@ -1265,9 +1265,6 @@ export default function CommandCard() {
       const entry = buildDailyDigestEntry(digest, daily);
       if (!entry) return;
       const saved = appendDailyDigest(entry);
-      modeRef.current = "daily";
-      await revealResult();
-      emit(EV.RESULT_SET_MODE, { mode: "daily" }).catch(logErr("emit set-mode"));
       emit(DAILY_DIGEST_CHANGED).catch(logErr("emit daily changed"));
       await emitDailyNotice("push", formatDailyPushNotice(saved));
       markPushSlotFired(now);
