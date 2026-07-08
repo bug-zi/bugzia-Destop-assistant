@@ -105,6 +105,12 @@ fn toggle_main(app: &AppHandle) {
     if let Some(win) = app.get_webview_window("main") {
         match win.is_visible() {
             Ok(true) => {
+                if let Some(result) = app.get_webview_window("result") {
+                    if result.is_visible().unwrap_or(false) {
+                        let _ = result.hide();
+                        let _ = app.emit_to("main", "command:close-result", ());
+                    }
+                }
                 let _ = win.hide();
             }
             _ => {
