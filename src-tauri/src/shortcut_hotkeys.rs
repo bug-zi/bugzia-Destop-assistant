@@ -183,6 +183,37 @@ fn should_show_shortcut(path: &Path) -> bool {
         || name.contains("酷狗")
 }
 
+fn shortcut_name(path: &Path) -> String {
+    path.file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("")
+        .trim()
+        .to_lowercase()
+}
+
+fn shortcut_matches_keywords(path: &Path, keywords: &[&str]) -> bool {
+    let name = shortcut_name(path);
+    if name.contains("uninstall") || name.contains("卸载") {
+        return false;
+    }
+    keywords.iter().any(|keyword| {
+        let keyword = keyword.trim().to_lowercase();
+        !keyword.is_empty() && (name == keyword || name.contains(&keyword))
+    })
+}
+
+/// 在桌面和开始菜单中找到一个可启动的应用快捷方式。
+pub fn find_launch_shortcut(keywords: &[&str]) -> Option<PathBuf> {
+    let mut found: Vec<(PathBuf, ShortcutLocation)> = Vec::new();
+    for (loc, root) in allowed_roots() {
+        walk_lnk(&root, loc, &mut found);
+    }
+    found
+        .into_iter()
+        .map(|(path, _)| path)
+        .find(|path| shortcut_matches_keywords(path, keywords))
+}
+
 // ---------------------------------------------------------------------------
 // Shell COM 读写（仅 Windows）——见模块头部的线程模型说明
 // ---------------------------------------------------------------------------
@@ -340,6 +371,82 @@ fn read_word(path: &Path) -> Option<u16> {
     match read_all_lnk(vec![path.to_path_buf()]).get(0) {
         Some(Ok((w, _, _))) => *w,
         _ => None,
+    }
+}
+
+/// 单个已迁移的旧 `.lnk` 热键，用于注册失败时回滚。
+#[derive(Clone)]
+pub struct LegacyLauncherHotkeyMigration {
+    path: PathBuf,
+    word: u16,
+}
+
+/// 将旧版由 Windows `.lnk` 直接注册的启动键迁移给 Bugzia。
+///
+/// `.lnk` 热键只能启动目标，无法实现“再次按下关闭”的切换行为；迁移时保留备份，
+/// 后续仍可从快捷方式中心恢复。
+pub fn migrate_legacy_launcher_hotkeys(
+    app: &AppHandle,
+) -> Result<Vec<LegacyLauncherHotkeyMigration>, String> {
+    let mut found: Vec<(PathBuf, ShortcutLocation)> = Vec::new();
+    for (loc, root) in allowed_roots() {
+        walk_lnk(&root, loc, &mut found);
+    }
+
+    let mut errors = Vec::new();
+    let mut migrated = Vec::new();
+    for (path, _) in found {
+        let expected = if shortcut_matches_keywords(&path, &["kugou", "酷狗"]) {
+            Some("Alt+K")
+        } else if shortcut_matches_keywords(&path, &["recycle bin", "回收站"]) {
+            Some("Alt+L")
+        } else {
+            None
+        };
+        let Some(expected) = expected else {
+            continue;
+        };
+        let Some(word) = read_word(&path) else {
+            continue;
+        };
+        let current = word_to_accel(word)
+            .map(|accel| format_accel(&accel))
+            .unwrap_or_default();
+        if !current.eq_ignore_ascii_case(expected) {
+            continue;
+        }
+        if !probe_can_modify(&path) {
+            errors.push(format!("无法迁移 {}", path.display()));
+            continue;
+        }
+        match do_backup(app, &path, Some(word)).and_then(|_| write_lnk_hotkey(&path, None)) {
+            Ok(()) => migrated.push(LegacyLauncherHotkeyMigration { path, word }),
+            Err(e) => errors.push(format!("迁移 {} 失败：{e}", path.display())),
+        }
+    }
+
+    if errors.is_empty() {
+        Ok(migrated)
+    } else {
+        let _ = restore_legacy_launcher_hotkeys(&migrated);
+        Err(errors.join("；"))
+    }
+}
+
+/// 还原由本次迁移清除的旧 `.lnk` 热键。
+pub fn restore_legacy_launcher_hotkeys(
+    migrated: &[LegacyLauncherHotkeyMigration],
+) -> Result<(), String> {
+    let mut errors = Vec::new();
+    for item in migrated {
+        if let Err(e) = write_lnk_hotkey(&item.path, Some(item.word)) {
+            errors.push(format!("恢复 {} 失败：{e}", item.path.display()));
+        }
+    }
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(errors.join("；"))
     }
 }
 

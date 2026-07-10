@@ -37,8 +37,8 @@ export interface PetGeom {
   h: number;
 }
 
-/** A partial geometry update emitted on a user move/resize (LOGICAL px). */
-export type PetGeomPatch = Partial<PetGeom>;
+/** A partial geometry update emitted on a user move (LOGICAL px). */
+export type PetGeomPatch = Partial<Pick<PetGeom, "x" | "y">>;
 
 let geomCb: ((patch: PetGeomPatch) => void) | null = null;
 let geomAttached = false;
@@ -49,29 +49,17 @@ let suppressGeomPersist = false;
 
 /**
  * Register the callback fired with the pet window's LOGICAL geometry whenever the
- * USER moves or resizes it. Wired by the main window so it can persist pet.x/y/w/h
+ * USER moves it. Wired by the main window so it can persist pet.x/y
  * (main is the sole settings.json writer). Attaches lazily on first window existence.
  */
 export function onPetGeometryChange(cb: (patch: PetGeomPatch) => void): void {
   geomCb = cb;
 }
 
-/** Attach move + resize listeners once per app lifetime. ACL-checked against main. */
+/** Attach move listeners once per app lifetime. ACL-checked against main. */
 function attachGeometryIfNeeded(win: WebviewWindow): void {
   if (geomAttached) return;
   geomAttached = true;
-
-  win.onResized(async ({ payload }) => {
-    if (suppressGeomPersist || !geomCb) return;
-    try {
-      const sf = await win.scaleFactor();
-      geomCb({ w: Math.round(payload.width / sf), h: Math.round(payload.height / sf) });
-    } catch {
-      geomAttached = false;
-    }
-  }).catch(() => {
-    geomAttached = false;
-  });
 
   win.onMoved(async ({ payload }) => {
     if (suppressGeomPersist || !geomCb) return;
@@ -89,6 +77,7 @@ function attachGeometryIfNeeded(win: WebviewWindow): void {
 async function enforcePetWindowMinSize(win: WebviewWindow): Promise<void> {
   suppressGeomPersist = true;
   try {
+    await win.setResizable(false);
     await win.setMinSize(new LogicalSize(MIN_W, MIN_H));
     const [size, sf] = await Promise.all([win.innerSize(), win.scaleFactor()]);
     const w = Math.round(size.width / sf);
@@ -118,7 +107,7 @@ export async function ensurePetWindow(): Promise<WebviewWindow> {
     height: DEFAULT_H,
     minWidth: MIN_W,
     minHeight: MIN_H,
-    resizable: true,
+    resizable: false,
     decorations: false,
     transparent: true,
     shadow: false,

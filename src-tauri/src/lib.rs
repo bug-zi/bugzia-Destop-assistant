@@ -24,10 +24,10 @@ use file_search::{open_file, reveal_file, search_files};
 use hotkey_center::{
     app_config_hotkey_entry_update, hotkey_center_detect_conflicts, hotkey_center_hidden_list,
     hotkey_center_hide_entry, hotkey_center_scan, hotkey_center_unhide_entry,
-    hotkey_observer_set_enabled, hotkey_observer_status, start_hotkey_remapper,
-    manual_hotkey_entries_list,
+    hotkey_observer_set_enabled, hotkey_observer_status, manual_hotkey_entries_list,
     manual_hotkey_entry_add, manual_hotkey_entry_remove, manual_hotkey_entry_update,
     observed_hotkey_promote, observed_hotkey_remove, observed_hotkeys_list, running_apps_list,
+    start_hotkey_remapper,
 };
 use notes::{notes_load, notes_save};
 use recyclebin::pet_eat_files;
@@ -35,6 +35,7 @@ use settings::{
     clear_api_key, load_api_key, load_settings, save_api_key, save_settings, AgentNotifySettings,
 };
 use shortcut_hotkeys::{
+    find_launch_shortcut, migrate_legacy_launcher_hotkeys, restore_legacy_launcher_hotkeys,
     shortcut_hotkey_clear, shortcut_hotkey_hidden_list, shortcut_hotkey_hide,
     shortcut_hotkey_restore, shortcut_hotkey_reveal, shortcut_hotkey_set, shortcut_hotkey_unhide,
     shortcut_hotkeys_scan,
@@ -49,14 +50,15 @@ use std::process::Command;
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
 #[cfg(target_os = "windows")]
-use windows::Win32::Foundation::{CloseHandle, HWND};
+use windows::Win32::Foundation::{CloseHandle, BOOL, HWND, LPARAM, WPARAM};
 #[cfg(target_os = "windows")]
 use windows::Win32::System::Diagnostics::ToolHelp::{
     CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W, TH32CS_SNAPPROCESS,
 };
 #[cfg(target_os = "windows")]
 use windows::Win32::UI::WindowsAndMessaging::{
-    GetForegroundWindow, GetWindowTextW, GetWindowThreadProcessId,
+    EnumWindows, GetForegroundWindow, GetWindowTextW, GetWindowThreadProcessId, IsWindowVisible,
+    PostMessageW, WM_CLOSE,
 };
 
 #[cfg(target_os = "windows")]
@@ -154,6 +156,136 @@ fn destroy_current_note(app: &AppHandle) {
     let _ = app.emit_to("main", "note://destroy-current", ());
 }
 
+#[cfg(target_os = "windows")]
+const KUGOU_PROCESS_NAMES: &[&str] = &["kugou.exe"];
+#[cfg(target_os = "windows")]
+const KUGOU_TITLE_HINTS: &[&str] = &["酷狗", "kugou"];
+#[cfg(target_os = "windows")]
+const WECHAT_PROCESS_NAMES: &[&str] = &["wechat.exe", "weixin.exe", "wechatappex.exe"];
+#[cfg(target_os = "windows")]
+const WECHAT_TITLE_HINTS: &[&str] = &["微信", "wechat", "weixin"];
+#[cfg(target_os = "windows")]
+const RECYCLE_BIN_PROCESS_NAMES: &[&str] = &["explorer.exe"];
+#[cfg(target_os = "windows")]
+const RECYCLE_BIN_TITLE_HINTS: &[&str] = &["回收站", "recycle bin"];
+
+#[cfg(target_os = "windows")]
+struct ExternalWindowLookup {
+    process_names: &'static [&'static str],
+    title_hints: &'static [&'static str],
+    best: Option<(HWND, u8)>,
+}
+
+#[cfg(target_os = "windows")]
+unsafe extern "system" fn enum_external_window_proc(hwnd: HWND, lparam: LPARAM) -> BOOL {
+    if !IsWindowVisible(hwnd).as_bool() {
+        return BOOL(1);
+    }
+    let lookup = &mut *(lparam.0 as *mut ExternalWindowLookup);
+    let mut pid = 0u32;
+    GetWindowThreadProcessId(hwnd, Some(&mut pid as *mut u32));
+    let process_name = process_name_for_pid(pid).unwrap_or_default();
+    if !lookup
+        .process_names
+        .iter()
+        .any(|name| process_name.eq_ignore_ascii_case(name))
+    {
+        return BOOL(1);
+    }
+
+    let title = window_title(hwnd).to_lowercase();
+    let score = if lookup
+        .title_hints
+        .iter()
+        .any(|hint| title.contains(&hint.to_lowercase()))
+    {
+        2
+    } else {
+        1
+    };
+    if lookup.best.is_none_or(|(_, best_score)| score > best_score) {
+        lookup.best = Some((hwnd, score));
+    }
+    BOOL(1)
+}
+
+#[cfg(target_os = "windows")]
+fn find_external_window(
+    process_names: &'static [&'static str],
+    title_hints: &'static [&'static str],
+) -> Option<HWND> {
+    let mut lookup = ExternalWindowLookup {
+        process_names,
+        title_hints,
+        best: None,
+    };
+    unsafe {
+        let _ = EnumWindows(
+            Some(enum_external_window_proc),
+            LPARAM(&mut lookup as *mut ExternalWindowLookup as isize),
+        );
+    }
+    lookup.best.map(|(hwnd, _)| hwnd)
+}
+
+#[cfg(target_os = "windows")]
+fn launch_from_shortcut(keywords: &[&str], name: &str) -> Result<(), String> {
+    let shortcut = find_launch_shortcut(keywords)
+        .ok_or_else(|| format!("未找到{name}的桌面或开始菜单快捷方式"))?;
+    Command::new("explorer.exe")
+        .arg(shortcut)
+        .spawn()
+        .map(|_| ())
+        .map_err(|e| format!("启动{name}失败：{e}"))
+}
+
+#[cfg(target_os = "windows")]
+fn toggle_external_app(
+    process_names: &'static [&'static str],
+    title_hints: &'static [&'static str],
+    launch: impl FnOnce() -> Result<(), String>,
+) -> Result<(), String> {
+    if let Some(hwnd) = find_external_window(process_names, title_hints) {
+        unsafe {
+            PostMessageW(hwnd, WM_CLOSE, WPARAM(0), LPARAM(0))
+                .map_err(|e| format!("关闭应用窗口失败：{e}"))?;
+        }
+        return Ok(());
+    }
+    launch()
+}
+
+fn toggle_kugou() {
+    #[cfg(target_os = "windows")]
+    if let Err(e) = toggle_external_app(KUGOU_PROCESS_NAMES, KUGOU_TITLE_HINTS, || {
+        launch_from_shortcut(&["kugou", "酷狗"], "酷狗音乐")
+    }) {
+        eprintln!("[bugzia-hk] 切换酷狗音乐失败：{e}");
+    }
+}
+
+fn toggle_recycle_bin() {
+    #[cfg(target_os = "windows")]
+    if let Err(e) = toggle_external_app(RECYCLE_BIN_PROCESS_NAMES, RECYCLE_BIN_TITLE_HINTS, || {
+        Command::new("explorer.exe")
+            .arg("shell:RecycleBinFolder")
+            .spawn()
+            .map(|_| ())
+            .map_err(|e| format!("打开回收站失败：{e}"))
+    }) {
+        eprintln!("[bugzia-hk] 切换回收站失败：{e}");
+    }
+}
+
+fn toggle_wechat() {
+    #[cfg(target_os = "windows")]
+    if let Err(e) = toggle_external_app(WECHAT_PROCESS_NAMES, WECHAT_TITLE_HINTS, || {
+        launch_from_shortcut(&["微信", "wechat", "weixin"], "微信")
+    }) {
+        eprintln!("[bugzia-hk] 切换微信失败：{e}");
+    }
+}
+
 /// (Re)register the global hotkeys. Clears any previously registered shortcuts
 /// first so a settings change fully replaces every binding together (clearing is
 /// all-or-nothing, so all keys MUST be registered in the same call — otherwise
@@ -180,6 +312,13 @@ fn register_hotkeys(
     let note_create = note_create.trim().to_lowercase();
     let note_destroy = note_destroy.trim().to_lowercase();
     let mut errs: Vec<String> = Vec::new();
+    let migrated_legacy_shortcuts = match migrate_legacy_launcher_hotkeys(app) {
+        Ok(migrated) => migrated,
+        Err(e) => {
+            errs.push(format!("迁移旧快捷方式启动键失败：{e}"));
+            Vec::new()
+        }
+    };
 
     // [诊断] 打印本次注册收到的四个键值，定位「新键不生效」断在哪一层。
     // 验证后移除。
@@ -227,6 +366,42 @@ fn register_hotkeys(
         }) {
             Ok(()) => eprintln!("[bugzia-hk] 已注册 note_destroy = {note_destroy:?}"),
             Err(e) => errs.push(format!("销毁便签键「{note_destroy}」无效：{e}")),
+        }
+    }
+
+    let kugou_registered = match gs.on_shortcut("alt+k", |_app, _shortcut, event| {
+        if event.state == ShortcutState::Pressed {
+            toggle_kugou();
+        }
+    }) {
+        Ok(()) => true,
+        Err(e) => {
+            errs.push(format!("酷狗音乐切换键「Alt+K」无效：{e}"));
+            false
+        }
+    };
+    let recycle_bin_registered = match gs.on_shortcut("alt+l", |_app, _shortcut, event| {
+        if event.state == ShortcutState::Pressed {
+            toggle_recycle_bin();
+        }
+    }) {
+        Ok(()) => true,
+        Err(e) => {
+            errs.push(format!("回收站切换键「Alt+L」无效：{e}"));
+            false
+        }
+    };
+    if let Err(e) = gs.on_shortcut("alt+j", |_app, _shortcut, event| {
+        if event.state == ShortcutState::Pressed {
+            toggle_wechat();
+        }
+    }) {
+        errs.push(format!("微信切换键「Alt+J」无效：{e}"));
+    }
+
+    if !(kugou_registered && recycle_bin_registered) && !migrated_legacy_shortcuts.is_empty() {
+        if let Err(e) = restore_legacy_launcher_hotkeys(&migrated_legacy_shortcuts) {
+            errs.push(format!("恢复旧快捷方式启动键失败：{e}"));
         }
     }
 
@@ -676,17 +851,16 @@ fn pet_assets_dir(app: AppHandle) -> Result<String, String> {
 
 /// Make the OS launch-on-boot state match the user's stored intent. Called at
 /// startup so a user who disabled autostart stays disabled across restarts —
-/// we never force-enable over their choice.
+/// we never force-enable over their choice. Re-enable unconditionally when it
+/// is wanted so a stale registry path is repaired after an app update or move.
 fn sync_autostart(app: &AppHandle) {
     let want = load_settings(app.clone())
         .map(|s| s.system.autostart)
         .unwrap_or(true);
     let mgr = app.state::<AutoLaunchManager>();
-    let cur = mgr.is_enabled().unwrap_or(false);
-    if want && !cur {
-        let _ = mgr.enable();
-    } else if !want && cur {
-        let _ = mgr.disable();
+    let result = if want { mgr.enable() } else { mgr.disable() };
+    if let Err(e) = result {
+        eprintln!("[bugzia] sync autostart: {e}");
     }
 }
 

@@ -1,0 +1,8 @@
+Salamander Grand Piano V3 sample recordings
+
+Author: Alexander Holm
+License: Creative Commons Attribution 3.0 Unported
+Source: https://archive.org/details/SalamanderGrandPianoV3
+
+The bundled OGG packaging was sourced from @audio-samples/piano-velocity packages
+by Jan Forst (MIT): https://github.com/darosh/samples-piano

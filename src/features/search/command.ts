@@ -1,6 +1,6 @@
 import { openUrl } from "@tauri-apps/plugin-opener";
 
-export type CommandMode = "ai" | "web" | "file" | "weather" | "trans" | "note" | "help";
+export type CommandMode = "ai" | "web" | "file" | "weather" | "trans" | "note" | "piano" | "help";
 
 export interface ParsedCommand {
   mode: CommandMode;
@@ -47,6 +47,7 @@ export const COMMANDS: CommandDef[] = [
   { mode: "weather", prefix: "/weather", description: "查询城市天气" },
   { mode: "trans", prefix: "/trans", description: "翻译文本（中英自动互译）" },
   { mode: "note", prefix: "/note", description: "在桌面生成一张便笺" },
+  { mode: "piano", prefix: "/piano", description: "打开钢琴演奏", argless: true },
   { mode: "help", prefix: "/help", description: "查看所有命令", argless: true },
 ];
 
@@ -84,6 +85,7 @@ const DEFAULT_ENGINE = SEARCH_ENGINES[0];
  *   `/ai`           -> force AI chat
  *   `/weather`      -> city weather
  *   `/trans`        -> translate
+ *   `/piano`        -> open the piano window
  *   `/help`         -> list commands
  *
  * Behavior for the legacy prefixes (web/file/ai/?) is byte-for-byte preserved;

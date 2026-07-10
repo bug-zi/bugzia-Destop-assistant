@@ -1,0 +1,10 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "piano",
+  "description": "Capability for the piano window",
+  "windows": ["piano"],
+  "permissions": [
+    "core:default",
+    "core:window:allow-close"
+  ]
+}

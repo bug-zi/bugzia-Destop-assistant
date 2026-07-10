@@ -11,6 +11,7 @@ import { streamChat, streamOnce, stopChat, clearContext, type ChatEvent, type Ch
 import { listConversations, getConversation, upsertConversation, deriveTitle } from "../features/conversations/conversations";
 import { loadSettings, saveSettings } from "../features/settings/settingsStore";
 import { openSettingsWindow } from "../features/settings/settingsWindow";
+import { openPianoWindow } from "../features/piano/pianoWindow";
 import { applyAppearanceVars } from "../features/appearance/appearance";
 import { DEFAULT_NOTE } from "../features/settings/settingsTypes";
 import type { AppSettings, PetSettings, WaveformSettings, WindowSettings, SettingsPatch } from "../features/settings/settingsTypes";
@@ -841,9 +842,8 @@ export default function CommandCard() {
     }
   }, [settings?.pet.x, settings?.pet.y, settings?.pet.enabled]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Persist the pet window's geometry when the USER moves/resizes it, so a
-  // manual placement + size survives an app restart. Programmatic placements on
-  // show are suppressed in petWindow.ts.
+  // Persist the pet window's position when the USER moves it, so manual
+  // placement survives an app restart. Size is controlled from Settings.
   useEffect(() => {
     onPetGeometryChange((g) => {
       const cur = settingsRef.current;
@@ -851,8 +851,6 @@ export default function CommandCard() {
       const patch: Partial<PetSettings> = {};
       if (g.x !== undefined) patch.x = g.x;
       if (g.y !== undefined) patch.y = g.y;
-      if (g.w !== undefined) patch.w = g.w;
-      if (g.h !== undefined) patch.h = g.h;
       update({ ...cur, pet: { ...cur.pet, ...patch } });
     });
   }, [update]);
@@ -1489,6 +1487,12 @@ export default function CommandCard() {
       }
       setValue("");
       void spawnNote(text);
+      return;
+    }
+
+    if (mode === "piano") {
+      setValue("");
+      void openPianoWindow().catch(logErr("open piano"));
       return;
     }
 
