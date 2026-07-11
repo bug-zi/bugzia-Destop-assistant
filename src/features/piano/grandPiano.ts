@@ -118,6 +118,7 @@ export async function warmGrandPiano(context: AudioContext): Promise<void> {
 
 export async function createGrandPianoVoice(
   context: AudioContext,
+  destination: AudioNode,
   midi: number,
   velocity: number,
   amplitude: number,
@@ -134,7 +135,7 @@ export async function createGrandPianoVoice(
   gainNode.gain.setValueAtTime(0.0001, now);
   gainNode.gain.exponentialRampToValueAtTime(amplitude, now + 0.008);
   source.connect(gainNode);
-  gainNode.connect(context.destination);
+  gainNode.connect(destination);
   source.start(now);
 
   return () => {

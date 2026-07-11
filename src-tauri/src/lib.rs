@@ -43,16 +43,11 @@ use shortcut_hotkeys::{
 
 use std::fs;
 #[cfg(target_os = "windows")]
-use std::env;
-#[cfg(target_os = "windows")]
 use std::mem::size_of;
-#[cfg(target_os = "windows")]
-use std::path::Path;
 use std::path::PathBuf;
 use std::process::Command;
+use std::{thread, time::Duration};
 
-#[cfg(target_os = "windows")]
-use auto_launch::AutoLaunchBuilder;
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
 #[cfg(target_os = "windows")]
@@ -95,9 +90,7 @@ extern "system" {
 use tauri::menu::{CheckMenuItem, IsMenuItem, Menu, MenuItem};
 use tauri::tray::TrayIconBuilder;
 use tauri::{AppHandle, Emitter, LogicalSize, Manager, Wry};
-#[cfg(not(target_os = "windows"))]
-use tauri_plugin_autostart::AutoLaunchManager;
-use tauri_plugin_autostart::MacosLauncher;
+use tauri_plugin_autostart::{AutoLaunchManager, MacosLauncher};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 
 /// Show + focus the main bar. Used by the global shortcut and the tray menu.
@@ -857,78 +850,22 @@ fn pet_assets_dir(app: AppHandle) -> Result<String, String> {
         .ok_or_else(|| "pet dir path is not valid UTF-8".to_string())
 }
 
-#[cfg(target_os = "windows")]
-fn windows_autostart_target_path() -> Result<PathBuf, String> {
-    let current = env::current_exe().map_err(|e| format!("resolve current exe: {e}"))?;
-
-    #[cfg(debug_assertions)]
-    {
-        if let Some(parent) = current.parent() {
-            let is_debug_dir = parent
-                .file_name()
-                .and_then(|name| name.to_str())
-                .is_some_and(|name| name.eq_ignore_ascii_case("debug"));
-            if is_debug_dir {
-                let file_name = current
-                    .file_name()
-                    .ok_or_else(|| format!("current exe has no file name: {}", current.display()))?;
-                if let Some(target_dir) = parent.parent() {
-                    let release = target_dir.join("release").join(file_name);
-                    if release.is_file() {
-                        return Ok(release);
-                    }
-                    return Err(format!(
-                        "release autostart target not found: {}",
-                        release.display()
-                    ));
-                }
-            }
-        }
-    }
-
-    Ok(current)
-}
-
-#[cfg(target_os = "windows")]
-fn quote_windows_path(path: &Path) -> String {
-    format!("\"{}\"", path.display())
-}
-
-#[cfg(target_os = "windows")]
-fn set_autostart_enabled(app: &AppHandle, enabled: bool) -> Result<(), String> {
-    let target = if enabled {
-        windows_autostart_target_path()?
-    } else {
-        env::current_exe().map_err(|e| format!("resolve current exe: {e}"))?
-    };
-    let mut builder = AutoLaunchBuilder::new();
-    builder.set_app_name(&app.package_info().name);
-    builder.set_app_path(&quote_windows_path(&target));
-    let manager = builder.build().map_err(|e| e.to_string())?;
-    let result = if enabled {
-        manager.enable()
-    } else {
-        manager.disable()
-    };
-    result.map_err(|e| e.to_string())
-}
-
-#[cfg(not(target_os = "windows"))]
-fn set_autostart_enabled(app: &AppHandle, enabled: bool) -> Result<(), String> {
-    let mgr = app.state::<AutoLaunchManager>();
-    let result = if enabled { mgr.enable() } else { mgr.disable() };
-    result.map_err(|e| e.to_string())
-}
-
-/// Make the OS launch-on-boot state match the user's stored intent. Called at
-/// startup so a user who disabled autostart stays disabled across restarts —
-/// we never force-enable over their choice. Re-enable unconditionally when it
-/// is wanted so a stale registry path is repaired after an app update or move.
+/// Make the OS launch-on-boot state match the user's stored intent. Debug
+/// builds must never register themselves: they load Vite's dev URL and are not
+/// valid login applications.
 fn sync_autostart(app: &AppHandle) {
     let want = load_settings(app.clone())
         .map(|s| s.system.autostart)
         .unwrap_or(true);
-    if let Err(e) = set_autostart_enabled(app, want) {
+    #[cfg(all(target_os = "windows", debug_assertions))]
+    if want {
+        eprintln!("[bugzia] skip autostart enable in debug build");
+        return;
+    }
+
+    let mgr = app.state::<AutoLaunchManager>();
+    let result = if want { mgr.enable() } else { mgr.disable() };
+    if let Err(e) = result {
         eprintln!("[bugzia] sync autostart: {e}");
     }
 }
@@ -1000,8 +937,17 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
                 s.system.autostart = !s.system.autostart;
                 let next = s.system.autostart;
                 let _ = save_settings(app.clone(), s);
-                if let Err(e) = set_autostart_enabled(app, next) {
-                    eprintln!("[bugzia] toggle autostart: {e}");
+                #[cfg(all(target_os = "windows", debug_assertions))]
+                if next {
+                    eprintln!("[bugzia] skip autostart enable in debug build");
+                } else {
+                    let mgr = app.state::<AutoLaunchManager>();
+                    let _ = mgr.disable();
+                }
+                #[cfg(not(all(target_os = "windows", debug_assertions)))]
+                {
+                    let mgr = app.state::<AutoLaunchManager>();
+                    let _ = if next { mgr.enable() } else { mgr.disable() };
                 }
                 let _ = autostart_for_handler.set_checked(next);
             }
@@ -1050,13 +996,20 @@ pub fn run() {
         .plugin(global_shortcut)
         .plugin(tauri_plugin_autostart::init(
             MacosLauncher::LaunchAgent,
-            None::<Vec<&'static str>>,
+            Some(vec!["--autostart"]),
         ))
         .manage(ai::ChatState::default())
         .manage(waveform::WaveformState::default())
         .setup(|app| {
             sync_autostart(app.handle());
             build_tray(app.handle())?;
+            if std::env::args_os().any(|arg| arg == "--autostart") {
+                let app_handle = app.handle().clone();
+                thread::spawn(move || {
+                    thread::sleep(Duration::from_millis(1200));
+                    focus_main(&app_handle);
+                });
+            }
             if let Err(e) = start_hotkey_remapper(app.handle()) {
                 eprintln!("[bugzia] hotkey remapper: {e}");
             }
