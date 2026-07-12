@@ -32,6 +32,7 @@ export default function NoteWindow() {
   const [settings, setSettings] = useState<NoteSettings>(DEFAULT_NOTE);
   const draftRef = useRef("");
   const taRef = useRef<HTMLTextAreaElement | null>(null);
+  const bodyRef = useRef<HTMLDivElement | null>(null);
   const confirmRef = useRef<HTMLDivElement | null>(null);
   const destroySentRef = useRef(false);
 
@@ -135,6 +136,13 @@ export default function NoteWindow() {
     ta.style.height = `${ta.scrollHeight}px`;
   }
 
+  function scrollBodyToBottom() {
+    requestAnimationFrame(() => {
+      const body = bodyRef.current;
+      if (body) body.scrollTop = body.scrollHeight;
+    });
+  }
+
   function focusTextarea(selection: "start" | "end") {
     requestAnimationFrame(() => {
       const ta = taRef.current;
@@ -143,6 +151,7 @@ export default function NoteWindow() {
       ta.focus();
       const pos = selection === "start" ? 0 : ta.value.length;
       ta.setSelectionRange(pos, pos);
+      if (selection === "end") scrollBodyToBottom();
     });
   }
 
@@ -276,6 +285,7 @@ export default function NoteWindow() {
       </div>
 
       <div
+        ref={bodyRef}
         className="note-body"
         onClick={(e) => {
           e.stopPropagation();
@@ -291,8 +301,16 @@ export default function NoteWindow() {
               color: rgba(settings.text_r, settings.text_g, settings.text_b, settings.text_alpha),
               fontSize: settings.font_size,
             }}
-            onChange={(e) => (draftRef.current = e.target.value)}
-            onInput={syncTextareaHeight}
+            onChange={(e) => {
+              draftRef.current = e.target.value;
+              syncTextareaHeight();
+              if (
+                e.target.selectionStart === e.target.value.length &&
+                e.target.selectionEnd === e.target.value.length
+              ) {
+                scrollBodyToBottom();
+              }
+            }}
             onBlur={commitEdit}
             onKeyDown={(e) => {
               if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
