@@ -76,6 +76,7 @@
 .piano-key:focus-visible,
 .timbre-key:focus-visible,
 .piano-volume input:focus-visible,
+.note-duration select:focus-visible,
 .ear-replay:focus-visible {
   outline: 2px solid rgba(255, 178, 204, 0.84);
   outline-offset: 2px;
@@ -166,6 +167,28 @@
   color: var(--piano-ink);
   font-variant-numeric: tabular-nums;
   text-align: end;
+}
+
+.note-duration {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 30px;
+  padding: 0 8px;
+  border: 1px solid var(--piano-border);
+  border-radius: 5px;
+  color: var(--piano-ink-muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.note-duration select {
+  min-inline-size: 84px;
+  border: 0;
+  background: transparent;
+  color: var(--piano-ink);
+  font: inherit;
+  cursor: pointer;
 }
 
 .piano-exit {
