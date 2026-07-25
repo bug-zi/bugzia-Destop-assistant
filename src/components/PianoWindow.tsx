@@ -261,6 +261,7 @@ export default function PianoWindow() {
   const timbreRef = useRef(timbre);
   const sustainRef = useRef(false);
   const volumeRef = useRef(volume);
+  const sustainedSoundIdRef = useRef(0);
   const earQuestionRef = useRef<KeyboardNote | null>(null);
   const earFeedbackRef = useRef<EarFeedback>("idle");
   const earNextTimerRef = useRef<number | null>(null);
@@ -383,7 +384,12 @@ export default function PianoWindow() {
       tones: { midi: number; label: string }[],
       pressure?: number,
     ) => {
-      if (activeSoundsRef.current.has(id)) return;
+      const currentSound = activeSoundsRef.current.get(id);
+      if (currentSound) {
+        if (!currentSound.pendingRelease) return;
+        activeSoundsRef.current.delete(id);
+        activeSoundsRef.current.set(`${id}:sustained:${sustainedSoundIdRef.current++}`, currentSound);
+      }
       const context = getContext();
       const destination = masterGainRef.current;
       if (!destination) return;
@@ -416,9 +422,12 @@ export default function PianoWindow() {
           .catch((error) => {
             console.error("[bugzia] play grand piano", error);
             setGrandPianoState("error");
-            if (activeSoundsRef.current.get(id) === sound) {
-              activeSoundsRef.current.delete(id);
-              refreshActiveKeys();
+            for (const [soundId, activeSound] of activeSoundsRef.current) {
+              if (activeSound === sound) {
+                activeSoundsRef.current.delete(soundId);
+                refreshActiveKeys();
+                break;
+              }
             }
           });
         return;

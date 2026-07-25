@@ -286,6 +286,19 @@
   overflow: hidden;
 }
 
+.piano-stage:has(.ear-training-panel) {
+  gap: 8px;
+  padding-bottom: 10px;
+}
+
+.piano-stage:has(.ear-training-panel) .piano-keyboard {
+  grid-template-rows: repeat(3, minmax(0, 1fr));
+}
+
+.piano-stage:has(.ear-training-panel) .piano-key {
+  padding-block: 8px;
+}
+
 .piano-key-row {
   min-width: 0;
   display: grid;
