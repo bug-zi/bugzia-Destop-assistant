@@ -9,6 +9,7 @@ import "./PianoWindow.css";
 
 type PlayMode = "free" | "chord" | "ear";
 type EarFeedback = "idle" | "listening" | "correct" | "wrong";
+type NoteDuration = "eighth" | "quarter";
 
 type OscillatorKind = OscillatorType;
 
@@ -29,6 +30,7 @@ interface KeyboardNote {
 interface ActiveSound {
   visualKey: string | null;
   pendingRelease: boolean;
+  autoReleaseTimer: number | null;
   release: () => void;
 }
 
@@ -61,6 +63,11 @@ const FREE_ROWS: KeyboardNote[][] = KEY_ROWS.map(({ keys, octave }) =>
 
 const FREE_BY_KEY = new Map(FREE_ROWS.flat().map((item) => [item.key, item]));
 const EAR_TRAINING_NOTES = FREE_ROWS.flat();
+const NOTE_DURATIONS: { id: NoteDuration; label: string; ms: number }[] = [
+  { id: "eighth", label: "八分音符", ms: 500 },
+  { id: "quarter", label: "四分音符", ms: 1000 },
+];
+const NOTE_DURATION_MS = new Map(NOTE_DURATIONS.map((item) => [item.id, item.ms]));
 
 const TIMBRES: TimbrePreset[] = [
   {
@@ -248,6 +255,7 @@ export default function PianoWindow() {
   const [timbre, setTimbre] = useState(1);
   const [sustain, setSustain] = useState(false);
   const [volume, setVolume] = useState(70);
+  const [noteDuration, setNoteDuration] = useState<NoteDuration>("quarter");
   const [activeKeys, setActiveKeys] = useState<Set<string>>(() => new Set());
   const [grandPianoState, setGrandPianoState] = useState<"loading" | "ready" | "error">("loading");
   const [earQuestion, setEarQuestion] = useState<KeyboardNote | null>(null);
@@ -261,6 +269,7 @@ export default function PianoWindow() {
   const timbreRef = useRef(timbre);
   const sustainRef = useRef(false);
   const volumeRef = useRef(volume);
+  const noteDurationRef = useRef<NoteDuration>("quarter");
   const sustainedSoundIdRef = useRef(0);
   const earQuestionRef = useRef<KeyboardNote | null>(null);
   const earFeedbackRef = useRef<EarFeedback>("idle");
@@ -319,6 +328,11 @@ export default function PianoWindow() {
     masterGain.gain.setTargetAtTime(next / 100, context.currentTime, 0.02);
   }, []);
 
+  const changeNoteDuration = useCallback((nextDuration: NoteDuration) => {
+    noteDurationRef.current = nextDuration;
+    setNoteDuration(nextDuration);
+  }, []);
+
   useEffect(() => {
     let alive = true;
     const context = getContext();
@@ -343,6 +357,10 @@ export default function PianoWindow() {
         sound.pendingRelease = true;
         return;
       }
+      if (sound.autoReleaseTimer !== null) {
+        window.clearTimeout(sound.autoReleaseTimer);
+        sound.autoReleaseTimer = null;
+      }
       sound.release();
       activeSoundsRef.current.delete(id);
       refreshActiveKeys();
@@ -352,6 +370,10 @@ export default function PianoWindow() {
 
   const releaseAll = useCallback(() => {
     for (const sound of activeSoundsRef.current.values()) {
+      if (sound.autoReleaseTimer !== null) {
+        window.clearTimeout(sound.autoReleaseTimer);
+        sound.autoReleaseTimer = null;
+      }
       sound.release();
     }
     activeSoundsRef.current.clear();
@@ -386,7 +408,7 @@ export default function PianoWindow() {
     ) => {
       const currentSound = activeSoundsRef.current.get(id);
       if (currentSound) {
-        if (!currentSound.pendingRelease) return;
+        if (!currentSound.pendingRelease && sustainRef.current) return;
         activeSoundsRef.current.delete(id);
         activeSoundsRef.current.set(`${id}:sustained:${sustainedSoundIdRef.current++}`, currentSound);
       }
@@ -400,6 +422,7 @@ export default function PianoWindow() {
       const sound: ActiveSound = {
         visualKey,
         pendingRelease: false,
+        autoReleaseTimer: null,
         release: () => {
           released = true;
           releaseVoices.forEach((release) => release());
@@ -407,6 +430,19 @@ export default function PianoWindow() {
       };
       activeSoundsRef.current.set(id, sound);
       refreshActiveKeys();
+
+      if (!sustainRef.current) {
+        const holdMs = NOTE_DURATION_MS.get(noteDurationRef.current) ?? NOTE_DURATION_MS.get("quarter")!;
+        sound.autoReleaseTimer = window.setTimeout(() => {
+          sound.autoReleaseTimer = null;
+          for (const [soundId, activeSound] of activeSoundsRef.current) {
+            if (activeSound === sound) {
+              releaseSound(soundId);
+              break;
+            }
+          }
+        }, holdMs);
+      }
 
       if (timbreRef.current === 1) {
         const velocity = grandPianoVelocity(tones.length, pressure);
@@ -437,7 +473,7 @@ export default function PianoWindow() {
         createVoice(context, destination, midiToFrequency(tone.midi), preset, amplitude),
       );
     },
-    [getContext, refreshActiveKeys],
+    [getContext, refreshActiveKeys, releaseSound],
   );
 
   const playEarQuestion = useCallback(
@@ -448,10 +484,11 @@ export default function PianoWindow() {
       }
       releaseSound("ear:prompt", true);
       startSound("ear:prompt", null, [{ midi: question.midi, label: question.note }]);
+      const holdMs = NOTE_DURATION_MS.get(noteDurationRef.current) ?? NOTE_DURATION_MS.get("quarter")!;
       earPromptTimerRef.current = window.setTimeout(() => {
         releaseSound("ear:prompt", true);
         earPromptTimerRef.current = null;
-      }, 850);
+      }, holdMs);
     },
     [releaseSound, startSound],
   );
@@ -576,11 +613,11 @@ export default function PianoWindow() {
         return;
       }
       event.preventDefault();
-      releaseSound(`keyboard:${key}`);
+      if (sustainRef.current) releaseSound(`keyboard:${key}`);
     };
 
     const onPointerUp = (event: PointerEvent) => {
-      releaseSound(`pointer:${event.pointerId}`);
+      if (sustainRef.current) releaseSound(`pointer:${event.pointerId}`);
     };
 
     const onBlur = () => {
@@ -694,6 +731,20 @@ export default function PianoWindow() {
           />
           <output>{volume}%</output>
         </label>
+        <label className="note-duration">
+          <span>时值</span>
+          <select
+            value={noteDuration}
+            aria-label="音符时值"
+            onChange={(event) => changeNoteDuration(event.currentTarget.value as NoteDuration)}
+          >
+            {NOTE_DURATIONS.map((item) => (
+              <option value={item.id} key={item.id}>
+                {item.label}
+              </option>
+            ))}
+          </select>
+        </label>
         <span className="piano-exit">Esc 返回</span>
       </section>
 
@@ -767,11 +818,11 @@ export default function PianoWindow() {
                     }}
                     onPointerUp={(event) => {
                       if (mode === "ear") return;
-                      releaseSound(`pointer:${event.pointerId}`);
+                      if (sustainRef.current) releaseSound(`pointer:${event.pointerId}`);
                     }}
                     onPointerCancel={(event) => {
                       if (mode === "ear") return;
-                      releaseSound(`pointer:${event.pointerId}`);
+                      if (sustainRef.current) releaseSound(`pointer:${event.pointerId}`);
                     }}
                   >
                     <span className="piano-key-note">
